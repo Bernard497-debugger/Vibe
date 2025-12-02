@@ -1,6 +1,5 @@
-Flask>=2.1
+Flask
 gunicorn
 psycopg2-binary
 supabase
 werkzeug
-Flask-Cors

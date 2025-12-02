@@ -10,12 +10,13 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from supabase import create_client, Client
+from werkzeug.exceptions import ConnectionError
 
 # ---------- Config ----------
 app = Flask(__name__)
 # Render will provide the PORT env var
 app.config['PORT'] = int(os.environ.get("PORT", 5000))
-app.secret_key = os.environ.get("SECRET_KEY", "vibenet-secret-key-dev")
+app.secret_key = os.environ.get("SECRET_KEY", "vibenet-secret-key-prod")
 
 # SUPABASE CREDENTIALS (These must be set in Render Environment Variables)
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -23,17 +24,19 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 # Supabase Client for Storage
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL else None
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
 # ---------- Database Helper (PostgreSQL) ----------
 def get_db_connection():
     """Connects to the PostgreSQL database using the environment variable."""
+    if not DATABASE_URL:
+        raise ConnectionError("DATABASE_URL is not set.")
     try:
+        # Use RealDictCursor to fetch results as dictionaries (like SQLite Row objects)
         conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
         return conn
     except Exception as e:
         print(f"Database connection error: {e}")
-        # In a real app, you'd handle this more gracefully
         raise ConnectionError("Failed to connect to the database. Check DATABASE_URL.")
 
 def now_ts():
@@ -57,13 +60,13 @@ def query_db(query, args=(), one=False):
     finally:
         conn.close()
 
-# ---------- Keep Alive (Optional, for staying awake) ----------
+# ---------- Keep Alive (Optional) ----------
 def keep_alive_pinger():
+    """Pings the local server periodically to keep the free-tier service awake longer."""
     port = app.config['PORT']
-    time.sleep(5)
+    time.sleep(10)
     while True:
         try:
-            # Pings the local server every 10 minutes
             urllib.request.urlopen(f"http://127.0.0.1:{port}/ping")
         except: pass
         time.sleep(600)
@@ -71,7 +74,7 @@ def keep_alive_pinger():
 @app.route("/ping")
 def ping(): return "Pong", 200
 
-# ---------- Frontend (HTML/JS template unchanged for brevity) ----------
+# ---------- Frontend (HTML/JS template) ----------
 HTML = r"""
 <!doctype html>
 <html>
@@ -296,6 +299,8 @@ def index(): return render_template_string(HTML)
 def api_upload():
     """Uploads a file to Supabase Storage and returns the public URL."""
     if 'file' not in request.files: return jsonify({"error":"No file"}), 400
+    if not supabase: return jsonify({"error": "Supabase client not initialized. Check URL/KEY."}), 500
+    
     f = request.files['file']
     fn = f"{uuid.uuid4().hex}_{f.filename}"
     file_bytes = f.read()
@@ -319,6 +324,7 @@ def api_signup():
     profile_pic=""
     
     if 'file' in request.files:
+        if not supabase: return jsonify({"error": "Supabase client not initialized for file upload."}), 500
         f = request.files['file']
         fn = f"{uuid.uuid4().hex}_{f.filename}"
         supabase.storage.from_("uploads").upload(fn, f.read(), {"content-type": f.content_type})
@@ -444,7 +450,6 @@ def api_ub():
 
 @app.route("/api/monetization/<path:e>")
 def api_mon(e):
-    # COUNT(*) returns a long integer, which RealDictCursor handles fine.
     f = query_db("SELECT COUNT(*) as c FROM followers WHERE user_email=%s", (e,), one=True)['c']
     u = query_db("SELECT watch_hours, earnings FROM users WHERE email=%s", (e,), one=True)
     return jsonify({"followers": f, "watch_hours": u['watch_hours'] if u else 0, "earnings": u['earnings'] if u else 0})

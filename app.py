@@ -10,7 +10,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from supabase import create_client, Client
-from werkzeug.exceptions import ConnectionError
+# Removed: from werkzeug.exceptions import ConnectionError # <-- THIS LINE WAS DELETED
 
 # ---------- Config ----------
 app = Flask(__name__)
@@ -30,14 +30,16 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and
 def get_db_connection():
     """Connects to the PostgreSQL database using the environment variable."""
     if not DATABASE_URL:
-        raise ConnectionError("DATABASE_URL is not set.")
+        # Changed ConnectionError to standard RuntimeError
+        raise RuntimeError("DATABASE_URL is not set.")
     try:
         # Use RealDictCursor to fetch results as dictionaries (like SQLite Row objects)
         conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
         return conn
     except Exception as e:
         print(f"Database connection error: {e}")
-        raise ConnectionError("Failed to connect to the database. Check DATABASE_URL.")
+        # Changed ConnectionError to standard RuntimeError
+        raise RuntimeError("Failed to connect to the database. Check DATABASE_URL.")
 
 def now_ts():
     """Returns current timestamp string."""

@@ -1,2 +1,5 @@
 Flask
-Werkzeug
+gunicorn
+psycopg2-binary
+supabase
+werkzeug

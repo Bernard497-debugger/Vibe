@@ -1,245 +1,511 @@
-import os, uuid, datetime, sqlite3
+# app.py - VibeNet (Render PostgreSQL Compatible + Sessions)
+import os
+import uuid
+import datetime
 import json as _json
-from flask import Flask, request, jsonify, g, render_template_string, session
+from flask import Flask, request, jsonify, send_from_directory, g, render_template_string, session
 
-app = Flask(__name__)
-app.secret_key = "vibe_secret_key"
-DB_PATH = "vibenet.db"
+# ---------- Database Imports ----------
+import sqlite3
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+    HAS_POSTGRES_LIB = True
+except ImportError:
+    HAS_POSTGRES_LIB = False
 
-# ---------- Database Logic ----------
+# ---------- Config ----------
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(APP_DIR, "data")
+UPLOAD_DIR = os.path.join(APP_DIR, "uploads")
+DB_PATH = os.path.join(DATA_DIR, "vibenet.db")
+os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+app = Flask(__name__, static_folder=None)
+app.config['MAX_CONTENT_LENGTH'] = 300 * 1024 * 1024  
+app.config['PORT'] = int(os.environ.get("PORT", 5000))
+DATABASE_URL = os.environ.get("DATABASE_URL")
+app.secret_key = os.environ.get("SECRET_KEY", "vibenet_secret_key_change_this_in_production")
+
+# ---------- Database Logic (Hybrid SQLite/Postgres) ----------
+
+def get_db_type():
+    if DATABASE_URL and HAS_POSTGRES_LIB:
+        return 'postgres'
+    return 'sqlite'
+
+class PostgresCursorWrapper:
+    def __init__(self, original_cursor):
+        self.cursor = original_cursor
+        self.lastrowid = None
+
+    def execute(self, sql, args=None):
+        sql = sql.replace('?', '%s')
+        is_insert = sql.strip().upper().startswith("INSERT")
+        if is_insert:
+            sql += " RETURNING id"
+        if args is None:
+            self.cursor.execute(sql)
+        else:
+            self.cursor.execute(sql, args)
+        if is_insert:
+            res = self.cursor.fetchone()
+            if res:
+                self.lastrowid = res['id']
+
+    def fetchone(self):
+        return self.cursor.fetchone()
+
+    def fetchall(self):
+        return self.cursor.fetchall()
+    
+    def __getattr__(self, name):
+        return getattr(self.cursor, name)
+
 def get_db():
-    if not hasattr(g, "_db"):
-        g._db = sqlite3.connect(DB_PATH)
-        g._db.row_factory = sqlite3.Row
+    if getattr(g, "_db", None) is None:
+        if get_db_type() == 'postgres':
+            conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+            g._db = conn
+            g._db_type = 'postgres'
+        else:
+            conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            g._db = conn
+            g._db_type = 'sqlite'
     return g._db
+
+def get_cursor(db):
+    if getattr(g, "_db_type", 'sqlite') == 'postgres':
+        return PostgresCursorWrapper(db.cursor())
+    return db.cursor()
 
 def init_db():
     db = get_db()
-    cur = db.cursor()
-    # Users & Monetization
-    cur.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE, name TEXT, watch_hours INTEGER DEFAULT 0, earnings REAL DEFAULT 0.0)")
-    # Posts & 1-Reaction Logic
-    cur.execute("CREATE TABLE IF NOT EXISTS posts (id INTEGER PRIMARY KEY AUTOINCREMENT, author_email TEXT, text TEXT, reactions_json TEXT DEFAULT '{}', timestamp TEXT)")
-    cur.execute("CREATE TABLE IF NOT EXISTS user_reactions (user_email TEXT, post_id INTEGER, emoji TEXT, PRIMARY KEY(user_email, post_id))")
-    # Messages & Notifications
-    cur.execute("CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, sender TEXT, recipient TEXT, text TEXT, timestamp TEXT)")
-    cur.execute("CREATE TABLE IF NOT EXISTS notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, user_email TEXT, text TEXT, seen INTEGER DEFAULT 0, timestamp TEXT)")
+    cur = get_cursor(db)
+    
+    if get_db_type() == 'postgres':
+        pk_def = "SERIAL PRIMARY KEY"
+    else:
+        pk_def = "INTEGER PRIMARY KEY AUTOINCREMENT"
+
+    cur.execute(f"""
+    CREATE TABLE IF NOT EXISTS users (
+        id {pk_def},
+        name TEXT,
+        email TEXT UNIQUE,
+        password TEXT,
+        profile_pic TEXT,
+        bio TEXT DEFAULT '',
+        watch_hours INTEGER DEFAULT 0,
+        earnings REAL DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""")
+    cur.execute(f"""
+    CREATE TABLE IF NOT EXISTS followers (
+        id {pk_def},
+        user_email TEXT,
+        follower_email TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""")
+    cur.execute(f"""
+    CREATE TABLE IF NOT EXISTS posts (
+        id {pk_def},
+        author_email TEXT,
+        author_name TEXT,
+        profile_pic TEXT,
+        text TEXT,
+        file_url TEXT,
+        timestamp TEXT,
+        reactions_json TEXT DEFAULT '{{}}',
+        comments_count INTEGER DEFAULT 0
+    )""")
+    cur.execute(f"""
+    CREATE TABLE IF NOT EXISTS user_reactions (
+        id {pk_def},
+        user_email TEXT,
+        post_id INTEGER,
+        emoji TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_email, post_id)
+    )""")
+    cur.execute(f"""
+    CREATE TABLE IF NOT EXISTS notifications (
+        id {pk_def},
+        user_email TEXT,
+        text TEXT,
+        timestamp TEXT,
+        seen INTEGER DEFAULT 0
+    )""")
+    cur.execute(f"""
+    CREATE TABLE IF NOT EXISTS ads (
+        id {pk_def},
+        title TEXT,
+        owner_email TEXT,
+        budget REAL DEFAULT 0,
+        impressions INTEGER DEFAULT 0,
+        clicks INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""")
     db.commit()
 
 @app.teardown_appcontext
-def close_db(e):
-    if hasattr(g, "_db"): g._db.close()
+def close_db(exception):
+    db = getattr(g, "_db", None)
+    if db is not None:
+        db.close()
 
-# ---------- UI Design (Modern Dark Theme) ----------
+def now_ts():
+    return datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+with app.app_context():
+    init_db()
+
+@app.route("/uploads/<path:filename>")
+def uploaded_file(filename):
+    return send_from_directory(UPLOAD_DIR, filename)
+
+# ---------- Frontend ----------
 HTML = r"""
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
 <head>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <style>
-        :root { --bg: #0b0e14; --card: #161b22; --border: #30363d; --accent: #58a6ff; --text: #c9d1d9; }
-        body { background: var(--bg); color: var(--text); font-family: -apple-system, sans-serif; margin: 0; }
-        
-        /* Layout Grid */
-        .app-container { display: grid; grid-template-columns: 250px 1fr 300px; max-width: 1200px; margin: 0 auto; gap: 20px; padding: 20px; }
-        
-        /* Sidebar Menu */
-        .menu-item { display: flex; align-items: center; gap: 12px; padding: 12px; cursor: pointer; border-radius: 8px; transition: 0.2s; font-weight: 500; }
-        .menu-item:hover { background: #21262d; color: var(--accent); }
-        .active { color: var(--accent); background: #1c2128; }
-        
-        /* Cards & Feed */
-        .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
-        .btn { background: var(--accent); color: white; border: none; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-weight: bold; }
-        textarea { width: 100%; background: transparent; border: none; color: white; font-size: 16px; resize: none; margin-bottom: 10px; }
-        
-        .badge { background: #f85149; color: white; font-size: 10px; padding: 2px 6px; border-radius: 10px; margin-left: auto; }
-        .stat-box { text-align: center; border-right: 1px solid var(--border); }
-        .stat-box:last-child { border: none; }
-    </style>
-</head>
-<body>
-    <div id="auth" style="display: flex; height: 100vh; align-items: center; justify-content: center;">
-        <div class="card" style="width: 300px; text-align: center;">
-            <h2 style="color:var(--accent)">VibeNet</h2>
-            <input id="email" placeholder="Enter Email" style="width:90%; padding:10px; margin-bottom:10px; border-radius:5px; border:1px solid var(--border); background:#0d1117; color:white;">
-            <button class="btn" style="width:100%" onclick="login()">Enter</button>
-        </div>
-    </div>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>VibeNet</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #060910;
+  --surface: #0c1018;
+  --card: #101520;
+  --card2: #131925;
+  --border: rgba(255,255,255,0.06);
+  --accent: #4DF0C0;
+  --accent2: #7B6EF6;
+  --accent3: #F06A4D;
+  --text: #E8F0FF;
+  --muted: #5A6A85;
+  --muted2: #8899B4;
+  --danger: #F06A4D;
+}
 
-    <div id="main" class="app-container" style="display:none">
-        <nav>
-            <h2 style="color:var(--accent); margin-left:12px;">VibeNet</h2>
-            <div class="menu-item active" onclick="showTab('feed')"><i data-lucide="home"></i> Home</div>
-            <div class="menu-item" onclick="showTab('messages')"><i data-lucide="mail"></i> Messages</div>
-            <div class="menu-item" onclick="showTab('notifs')"><i data-lucide="bell"></i> Notifications <span id="nBadge" class="badge" style="display:none">0</span></div>
-            <div class="menu-item" onclick="showTab('monet')"><i data-lucide="zap"></i> Monetization</div>
-        </nav>
+* { box-sizing: border-box; margin: 0; padding: 0; }
 
-        <main>
-            <div id="feedTab">
-                <div class="card">
-                    <textarea id="postContent" placeholder="Share your vibe..."></textarea>
-                    <div style="text-align: right;"><button class="btn" onclick="postVibe()">Post</button></div>
-                </div>
-                <div id="vibeList"></div>
-            </div>
+body {
+  background: var(--bg);
+  font-family: 'DM Sans', sans-serif;
+  color: var(--text);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
 
-            <div id="messagesTab" style="display:none">
-                <div class="card">
-                    <h3>Messages</h3>
-                    <input id="msgTo" placeholder="To (email)" style="width:95%; padding:8px; margin-bottom:10px; background:#0d1117; color:white; border:1px solid var(--border);">
-                    <textarea id="msgBody" placeholder="Type a message..."></textarea>
-                    <button class="btn" onclick="sendMsg()">Send</button>
-                </div>
-                <div id="inbox"></div>
-            </div>
+body::before {
+  content: '';
+  position: fixed;
+  top: -40%;
+  left: -20%;
+  width: 70%;
+  height: 70%;
+  background: radial-gradient(ellipse, rgba(77,240,192,0.04) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+body::after {
+  content: '';
+  position: fixed;
+  bottom: -30%;
+  right: -10%;
+  width: 60%;
+  height: 60%;
+  background: radial-gradient(ellipse, rgba(123,110,246,0.05) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
 
-            <div id="notifsTab" style="display:none">
-                <div class="card"><h3>Notifications</h3><div id="notifList"></div></div>
-            </div>
+/* ===== AUTH SCREEN ===== */
+#authScreen {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  background: var(--bg);
+  padding: 20px;
+}
 
-            <div id="monetTab" style="display:none">
-                <div class="card">
-                    <h3>Creator Revenue</h3>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; margin-top:20px;">
-                        <div class="stat-box"><small>WATCH HOURS</small><h2 id="mHours">0</h2></div>
-                        <div class="stat-box"><small>EST. EARNINGS</small><h2 id="mCash">$0.00</h2></div>
-                    </div>
-                </div>
-            </div>
-        </main>
+.auth-wrap {
+  width: 100%;
+  max-width: 900px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  background: var(--border);
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: 0 40px 120px rgba(0,0,0,0.8);
+  animation: fadeUp 0.5s ease both;
+}
 
-        <aside>
-            <div class="card">
-                <h4>Your Stats</h4>
-                <p id="userMail" style="font-size:12px; color:var(--accent)"></p>
-                <hr style="border:0.1px solid var(--border)">
-                <small>Every view on your posts adds to your earnings!</small>
-            </div>
-        </aside>
-    </div>
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 
-    <script>
-        let currentUser = null;
-        async function login() {
-            const email = document.getElementById('email').value;
-            if(!email) return;
-            const res = await fetch('/api/login', {
-                method: 'POST', 
-                headers: {'Content-Type': 'application/json'}, 
-                body: JSON.stringify({email})
-            });
-            const data = await res.json();
-            currentUser = data.user;
-            document.getElementById('auth').style.display = 'none';
-            document.getElementById('main').style.display = 'grid';
-            document.getElementById('userMail').innerText = currentUser.email;
-            refresh();
-            setInterval(refresh, 5000);
-        }
+.auth-brand {
+  background: linear-gradient(145deg, #0d1826, #080f1a);
+  padding: 52px 44px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
 
-        function showTab(name) {
-            ['feedTab', 'messagesTab', 'notifsTab', 'monetTab'].forEach(t => document.getElementById(t).style.display = 'none');
-            document.getElementById(name + 'Tab').style.display = 'block';
-            document.querySelectorAll('.menu-item').forEach(m => m.classList.remove('active'));
-            event.currentTarget.classList.add('active');
-        }
+.auth-brand::before {
+  content: 'VN';
+  position: absolute;
+  bottom: -30px;
+  right: -20px;
+  font-family: 'Syne', sans-serif;
+  font-size: 160px;
+  font-weight: 800;
+  color: rgba(77,240,192,0.04);
+  line-height: 1;
+  letter-spacing: -8px;
+}
 
-        async function postVibe() {
-            const text = document.getElementById('postContent').value;
-            await fetch('/api/posts', {
-                method: 'POST', 
-                headers: {'Content-Type': 'application/json'}, 
-                body: JSON.stringify({email: currentUser.email, text})
-            });
-            document.getElementById('postContent').value = '';
-            refresh();
-        }
+.brand-logo {
+  font-family: 'Syne', sans-serif;
+  font-size: 38px;
+  font-weight: 800;
+  color: var(--accent);
+  letter-spacing: -1px;
+  margin-bottom: 16px;
+}
 
-        async function react(postId, emoji) {
-            await fetch('/api/react', {
-                method: 'POST', 
-                headers: {'Content-Type': 'application/json'}, 
-                body: JSON.stringify({post_id: postId, emoji, email: currentUser.email})
-            });
-            refresh();
-        }
+.brand-tag {
+  font-size: 15px;
+  color: var(--muted2);
+  line-height: 1.6;
+  max-width: 240px;
+}
 
-        async function refresh() {
-            lucide.createIcons();
-            // Load Feed
-            const pRes = await fetch('/api/posts');
-            const posts = await pRes.json();
-            document.getElementById('vibeList').innerHTML = posts.map(p => `
-                <div class="card">
-                    <div style="font-weight:bold; margin-bottom:8px;">${p.author_email}</div>
-                    <div>${p.text}</div>
-                    <div style="margin-top:15px; display:flex; gap:10px;">
-                        <button class="btn" style="background:#21262d" onclick="react(${p.id}, '🔥')">🔥 ${p.reactions['🔥'] || 0}</button>
-                        <button class="btn" style="background:#21262d" onclick="react(${p.id}, '💎')">💎 ${p.reactions['💎'] || 0}</button>
-                    </div>
-                </div>
-            `).join('');
+.brand-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 32px;
+}
 
-            // Load Monetization
-            const mRes = await fetch('/api/monetization/' + currentUser.email);
-            const mData = await mRes.json();
-            document.getElementById('mHours').innerText = mData.watch_hours;
-            document.getElementById('mCash').innerText = '$' + mData.earnings.toFixed(2);
-        }
-    </script>
-</body>
-</html>
-"""
+.pill {
+  background: rgba(77,240,192,0.08);
+  border: 1px solid rgba(77,240,192,0.15);
+  color: var(--accent);
+  padding: 5px 12px;
+  border-radius: 100px;
+  font-size: 12px;
+  font-weight: 500;
+}
 
-# ---------- API Routes ----------
+.auth-forms {
+  background: var(--card);
+  padding: 44px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
 
-@app.route("/")
-def index(): return render_template_string(HTML)
+.auth-section h3 {
+  font-family: 'Syne', sans-serif;
+  font-size: 17px;
+  font-weight: 700;
+  margin-bottom: 16px;
+  color: var(--text);
+  letter-spacing: -0.3px;
+}
 
-@app.route("/api/login", methods=["POST"])
-def api_login():
-    email = request.json['email']
-    db = get_db(); cur = db.cursor()
-    cur.execute("INSERT OR IGNORE INTO users (email, name) VALUES (?,?)", (email, email.split('@')[0]))
-    db.commit()
-    cur.execute("SELECT * FROM users WHERE email=?", (email,))
-    return jsonify({"user": dict(cur.fetchone())})
+.field {
+  margin-bottom: 10px;
+}
 
-@app.route("/api/posts", methods=["GET", "POST"])
-def handle_posts():
-    db = get_db(); cur = db.cursor()
-    if request.method == "POST":
-        cur.execute("INSERT INTO posts (author_email, text, timestamp) VALUES (?,?,?)", 
-                    (request.json['email'], request.json['text'], datetime.datetime.now().isoformat()))
-        db.commit()
-        return jsonify({"ok": True})
-    cur.execute("SELECT * FROM posts ORDER BY id DESC")
-    rows = [dict(r) for r in cur.fetchall()]
-    for r in rows: r['reactions'] = _json.loads(r['reactions_json'])
-    return jsonify(rows)
+.field input {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 11px 14px;
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  transition: border-color 0.2s;
+  outline: none;
+}
 
-@app.route("/api/react", methods=["POST"])
-def api_react():
-    data = request.json
-    db = get_db(); cur = db.cursor()
-    # 1. Update/Insert the specific user's choice (restricts to 1 reaction total per post)
-    cur.execute("INSERT OR REPLACE INTO user_reactions (user_email, post_id, emoji) VALUES (?,?,?)", 
-                (data['email'], data['post_id'], data['emoji']))
-    # 2. Rebuild the reaction JSON for the post
-    cur.execute("SELECT emoji, count(*) as count FROM user_reactions WHERE post_id=? GROUP BY emoji", (data['post_id'],))
-    counts = {r['emoji']: r['count'] for r in cur.fetchall()}
-    cur.execute("UPDATE posts SET reactions_json=? WHERE id=?", (_json.dumps(counts), data['post_id']))
-    db.commit()
-    return jsonify({"success": True})
+.field input:focus {
+  border-color: rgba(77,240,192,0.4);
+}
 
-@app.route("/api/monetization/<email>")
-def get_monet(email):
-    cur = get_db().cursor()
-    cur.execute("SELECT watch_hours, earnings FROM users WHERE email=?", (email,))
-    return jsonify(dict(cur.fetchone()))
+.field input::placeholder { color: var(--muted); }
 
-if __name__ == "__main__":
-    with app.app_context(): init_db()
-    app.run(host="0.0.0.0", port=5000)
+.field-label {
+  font-size: 12px;
+  color: var(--muted2);
+  margin-bottom: 6px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.divider {
+  height: 1px;
+  background: var(--border);
+}
+
+/* Buttons */
+.btn-primary {
+  background: var(--accent);
+  color: #030a0e;
+  border: none;
+  padding: 11px 22px;
+  border-radius: 10px;
+  font-family: 'Syne', sans-serif;
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+  letter-spacing: 0.2px;
+}
+.btn-primary:hover { background: #6bf5d0; transform: translateY(-1px); }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--muted2);
+  border: 1px solid var(--border);
+  padding: 10px 20px;
+  border-radius: 10px;
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 500;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-ghost:hover { border-color: rgba(255,255,255,0.2); color: var(--text); }
+
+.btn-icon {
+  background: var(--card2);
+  border: 1px solid var(--border);
+  color: var(--muted2);
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 16px;
+  transition: all 0.2s;
+}
+.btn-icon:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ===== MAIN APP ===== */
+#mainApp {
+  display: none;
+  min-height: 100vh;
+  position: relative;
+  z-index: 1;
+}
+
+/* Top Nav */
+.topnav {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: rgba(6,9,16,0.85);
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--border);
+  padding: 0 32px;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.nav-brand {
+  font-family: 'Syne', sans-serif;
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--accent);
+  letter-spacing: -0.5px;
+}
+
+.nav-tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--surface);
+  padding: 4px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+
+.nav-tab {
+  background: transparent;
+  border: none;
+  color: var(--muted2);
+  padding: 7px 18px;
+  border-radius: 9px;
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 500;
+  font-size: 13.5px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  position: relative;
+}
+
+.nav-tab:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+.nav-tab.active { background: var(--card2); color: var(--text); }
+.nav-tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 20px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 2px;
+}
+
+.notif-dot {
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 100px;
+  line-height: 16px;
+  min-width: 18px;
+  text-align: center;
+}
+
+.nav-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.user-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--card2);
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  padding: 4px 14px 4px 4px;
+  cursor

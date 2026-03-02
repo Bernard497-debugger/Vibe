@@ -786,6 +786,95 @@ body::after {
   gap: 4px;
 }
 
+
+/* Post owner action buttons */
+.post-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.action-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.18s;
+  flex-shrink: 0;
+}
+.action-btn:hover { color: var(--text); border-color: rgba(255,255,255,0.2); }
+.action-btn.delete:hover { color: var(--danger); border-color: var(--danger); background: rgba(240,106,77,0.08); }
+.action-btn.edit-btn:hover { color: var(--accent); border-color: var(--accent); background: rgba(77,240,192,0.08); }
+
+/* Edit modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.72);
+  backdrop-filter: blur(6px);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: fadeIn 0.2s ease;
+}
+
+.modal-box {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 28px;
+  width: 100%;
+  max-width: 520px;
+  box-shadow: 0 40px 100px rgba(0,0,0,0.8);
+  animation: fadeUp 0.25s ease;
+}
+
+.modal-title {
+  font-family: 'Syne', sans-serif;
+  font-size: 18px;
+  font-weight: 800;
+  margin-bottom: 18px;
+  letter-spacing: -0.3px;
+}
+
+.modal-footer {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+/* Video wrapper for autoplay UI */
+.video-wrap {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #000;
+}
+.video-wrap video { width: 100%; display: block; max-height: 460px; object-fit: cover; }
+.play-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.32);
+  pointer-events: none;
+  transition: opacity 0.3s;
+}
+.play-hint span { font-size: 44px; filter: drop-shadow(0 2px 10px rgba(0,0,0,0.7)); }
+.video-wrap.playing .play-hint { opacity: 0; }
+
 /* ===== SECTION HEADER ===== */
 .section-header {
   margin-bottom: 20px;
@@ -1218,6 +1307,19 @@ body::after {
     </div>
 
   </div><!-- /app-layout -->
+
+<!-- Edit Post Modal -->
+<div id="editModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeEditModal()">
+  <div class="modal-box">
+    <div class="modal-title">Edit Post</div>
+    <textarea id="editPostText" class="bio-area" rows="5" placeholder="Update your post..."></textarea>
+    <div class="modal-footer">
+      <button class="btn-ghost" onclick="closeEditModal()">Cancel</button>
+      <button class="btn-primary" onclick="saveEditPost()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
 </div><!-- /mainApp -->
 
 <script>
@@ -1345,7 +1447,21 @@ function createPostElement(p){
   authorWrap.append(img, info);
   header.append(authorWrap);
 
-  if(currentUser && currentUser.email !== p.author_email){
+  if(currentUser && currentUser.email === p.author_email){
+    // Owner: edit + delete buttons
+    const actions = document.createElement('div'); actions.className='post-actions';
+    const editBtn = document.createElement('button'); editBtn.className='action-btn edit-btn'; editBtn.title='Edit'; editBtn.textContent='✏️';
+    editBtn.onclick = ()=> openEditModal(p.id, p.text);
+    const delBtn = document.createElement('button'); delBtn.className='action-btn delete'; delBtn.title='Delete'; delBtn.textContent='🗑';
+    delBtn.onclick = async ()=>{
+      if(!confirm('Delete this post?')) return;
+      const r = await fetch(API+'/posts/'+p.id, {method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email: currentUser.email})});
+      const j = await r.json();
+      if(j.success){ div.style.transition='opacity 0.3s,transform 0.3s'; div.style.opacity='0'; div.style.transform='scale(0.97)'; setTimeout(()=>{ div.remove(); loadMonetization(); }, 300); }
+    };
+    actions.append(editBtn, delBtn);
+    header.append(actions);
+  } else if(currentUser){
     const fb = document.createElement('button'); fb.className='follow-btn'; fb.textContent='+ Follow';
     fb.onclick = async ()=>{
       const res = await fetch(API+'/follow',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({follower_email:currentUser.email,target_email:p.author_email})});
@@ -1362,18 +1478,29 @@ function createPostElement(p){
 
   div.append(header);
 
-  if(p.text){ const t=document.createElement('div'); t.className='post-text'; t.textContent=p.text; div.append(t); }
+  const postTextEl = document.createElement('div');
+  if(p.text){ postTextEl.className='post-text'; postTextEl.textContent=p.text; div.append(postTextEl); }
+  div._postTextEl = postTextEl;
 
   if(p.file_url){
     const media = document.createElement('div'); media.className='post-media';
-    if(p.file_url.endsWith('.mp4')||p.file_url.endsWith('.webm')){
-      const v=document.createElement('video'); v.src=p.file_url; v.controls=true;
+    if(p.file_url.endsWith('.mp4')||p.file_url.endsWith('.webm')||p.file_url.includes('video')){
+      const wrap = document.createElement('div'); wrap.className='video-wrap';
+      const v = document.createElement('video');
+      v.src = p.file_url; v.controls = true; v.muted = true; v.loop = false;
+      v.setAttribute('playsinline','');
+      const hint = document.createElement('div'); hint.className='play-hint';
+      hint.innerHTML='<span>▶</span>';
+      v.addEventListener('play', ()=>{ wrap.classList.add('playing'); });
+      v.addEventListener('pause', ()=>{ wrap.classList.remove('playing'); });
       v.addEventListener('ended', async()=>{
+        wrap.classList.remove('playing');
         await fetch(API+'/watch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({viewer:currentUser?currentUser.email:'',post_id:p.id})});
         await fetch(API+'/ads/impression',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({post_id:p.id,viewer:currentUser?currentUser.email:''})});
         loadMonetization();
       });
-      media.append(v);
+      wrap.append(v, hint);
+      media.append(wrap);
     } else {
       const im=document.createElement('img'); im.src=p.file_url; media.append(im);
     }
@@ -1424,9 +1551,31 @@ async function loadFeed(){
 
 function observeVideos(){
   if(window._vn_obs) window._vn_obs.disconnect();
-  const obs=new IntersectionObserver(entries=>entries.forEach(e=>{if(e.intersectionRatio<0.25&&!e.target.paused)e.target.pause();}),{threshold:0.25});
+  let currentlyPlaying = null;
+
+  const obs = new IntersectionObserver(entries=>{
+    entries.forEach(entry=>{
+      const v = entry.target;
+      const ratio = entry.intersectionRatio;
+
+      if(ratio >= 0.6){
+        // Autoplay: pause anything else first
+        if(currentlyPlaying && currentlyPlaying !== v){
+          currentlyPlaying.pause();
+        }
+        if(v.paused){
+          v.muted = true;
+          v.play().then(()=>{ currentlyPlaying = v; }).catch(()=>{});
+        }
+      } else if(ratio < 0.25){
+        if(!v.paused){ v.pause(); }
+        if(currentlyPlaying === v) currentlyPlaying = null;
+      }
+    });
+  }, { threshold: [0, 0.25, 0.5, 0.6, 0.75, 1.0] });
+
   document.querySelectorAll('video').forEach(v=>obs.observe(v));
-  window._vn_obs=obs;
+  window._vn_obs = obs;
 }
 
 async function loadNotifications(){
@@ -1517,6 +1666,44 @@ async function loadAds(){
     d.innerHTML=`<div class="ad-item-name">${escapeHtml(a.title)}</div><div class="ad-item-stats"><span class="ad-stat">💰 ${a.budget}</span><span class="ad-stat">👁 ${a.impressions}</span><span class="ad-stat">🖱 ${a.clicks}</span></div>`;
     el.appendChild(d);
   });
+}
+
+
+// Edit modal
+let _editPostId = null;
+function openEditModal(postId, currentText){
+  _editPostId = postId;
+  byId('editPostText').value = currentText || '';
+  byId('editModal').style.display = 'flex';
+  setTimeout(()=>byId('editPostText').focus(), 80);
+}
+function closeEditModal(){
+  byId('editModal').style.display = 'none';
+  _editPostId = null;
+}
+async function saveEditPost(){
+  if(!_editPostId || !currentUser) return;
+  const text = byId('editPostText').value.trim();
+  if(!text){ alert('Post cannot be empty.'); return; }
+  const res = await fetch(API+'/posts/'+_editPostId, {
+    method: 'PATCH',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({email: currentUser.email, text})
+  });
+  const j = await res.json();
+  if(j.success){
+    closeEditModal();
+    // Update in-place in feed
+    const cards = document.querySelectorAll('.post-card');
+    cards.forEach(card=>{
+      if(card._postId == _editPostId && card._postTextEl){
+        card._postTextEl.textContent = text;
+      }
+    });
+    await loadFeed();
+  } else {
+    alert(j.error || 'Edit failed');
+  }
 }
 
 async function refreshAll(){ await loadFeed(); await loadNotifications(); await loadProfilePosts(); await loadMonetization(); await loadAds(); }
@@ -1628,6 +1815,33 @@ def api_posts():
         rec['reactions'] = _json.loads(rec['reactions_json'])
         rec['user_reaction'] = None
         return jsonify(rec)
+
+
+# ---------- Edit / Delete Post ----------
+@app.route("/api/posts/<int:post_id>", methods=["DELETE","PATCH"])
+def api_post_modify(post_id):
+    data = request.get_json() or {}
+    email = data.get("email")
+    db = get_db()
+    cur = get_cursor(db)
+    cur.execute("SELECT author_email FROM posts WHERE id=?", (post_id,))
+    row = cur.fetchone()
+    if not row:
+        return jsonify({"error": "Post not found"}), 404
+    if row['author_email'] != email:
+        return jsonify({"error": "Unauthorized"}), 403
+    if request.method == "DELETE":
+        cur.execute("DELETE FROM posts WHERE id=?", (post_id,))
+        cur.execute("DELETE FROM user_reactions WHERE post_id=?", (post_id,))
+        db.commit()
+        return jsonify({"success": True})
+    else:  # PATCH
+        text = data.get("text", "").strip()
+        if not text:
+            return jsonify({"error": "Text required"}), 400
+        cur.execute("UPDATE posts SET text=? WHERE id=?", (text, post_id))
+        db.commit()
+        return jsonify({"success": True})
 
 # ---------- React ----------
 @app.route("/api/react", methods=["POST"])

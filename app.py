@@ -423,47 +423,50 @@ body::after {
   position: sticky;
   top: 0;
   z-index: 50;
-  background: rgba(6,9,16,0.85);
+  background: rgba(6,9,16,0.92);
   backdrop-filter: blur(20px);
   border-bottom: 1px solid var(--border);
-  padding: 0 32px;
-  height: 60px;
+  padding: 0 20px;
+  height: 58px;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
 }
 
 .nav-brand {
   font-family: 'Syne', sans-serif;
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 800;
   color: var(--accent);
   letter-spacing: -0.5px;
+  flex-shrink: 0;
 }
 
 .nav-tabs {
   display: flex;
-  gap: 4px;
+  gap: 2px;
   background: var(--surface);
   padding: 4px;
   border-radius: 12px;
   border: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
 .nav-tab {
   background: transparent;
   border: none;
   color: var(--muted2);
-  padding: 7px 18px;
+  padding: 7px 14px;
   border-radius: 9px;
   font-family: 'DM Sans', sans-serif;
   font-weight: 500;
-  font-size: 13.5px;
+  font-size: 13px;
   cursor: pointer;
   transition: all 0.2s;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   white-space: nowrap;
   position: relative;
 }
@@ -476,7 +479,7 @@ body::after {
   bottom: -1px;
   left: 50%;
   transform: translateX(-50%);
-  width: 20px;
+  width: 16px;
   height: 2px;
   background: var(--accent);
   border-radius: 2px;
@@ -487,97 +490,105 @@ body::after {
   color: #fff;
   font-size: 10px;
   font-weight: 700;
-  padding: 1px 6px;
+  padding: 1px 5px;
   border-radius: 100px;
   line-height: 16px;
-  min-width: 18px;
+  min-width: 16px;
   text-align: center;
 }
 
 .nav-right {
   display: flex;
   align-items: center;
-  gap: 10px;
-}
-
-.user-chip {
-  display: flex;
-  align-items: center;
   gap: 8px;
-  background: var(--card2);
-  border: 1px solid var(--border);
-  border-radius: 100px;
-  padding: 4px 14px 4px 4px;
-  cursor: pointer;
+  flex-shrink: 0;
 }
 
-.user-chip-avatar {
+.nav-avatar {
   width: 30px;
   height: 30px;
   border-radius: 50%;
   object-fit: cover;
   background: var(--surface);
+  border: 2px solid var(--border);
+  cursor: pointer;
 }
 
-.user-chip-name {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text);
-}
-
-/* ===== LAYOUT ===== */
-.app-layout {
-  max-width: 1120px;
-  margin: 0 auto;
-  padding: 28px 20px;
-  display: grid;
-  grid-template-columns: 1fr 300px;
-  gap: 24px;
-  align-items: start;
-}
-
-.main-col { min-width: 0; }
-
-/* Sidebar */
-.sidebar {
+.nav-signout {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--muted2);
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 15px;
   display: flex;
-  flex-direction: column;
-  gap: 16px;
-  position: sticky;
-  top: 84px;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
 }
+.nav-signout:hover { border-color: rgba(240,106,77,0.5); color: var(--danger); background: rgba(240,106,77,0.07); }
 
-.sidebar-card {
+/* ===== USER PANEL (below header, in sidebar) ===== */
+.user-panel {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 16px;
   padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
 }
 
-.sidebar-card h4 {
-  font-family: 'Syne', sans-serif;
-  font-size: 13px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
-  color: var(--muted2);
+.user-panel-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
   margin-bottom: 14px;
 }
 
-.stat-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--border);
+.user-panel-avatar {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--surface);
+  border: 2px solid rgba(77,240,192,0.25);
+  flex-shrink: 0;
 }
-.stat-row:last-child { border-bottom: none; }
 
-.stat-label { font-size: 13px; color: var(--muted2); }
-.stat-value { font-family: 'Syne', sans-serif; font-size: 16px; font-weight: 700; color: var(--text); }
+.user-panel-name {
+  font-family: 'Syne', sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.2;
+}
 
-.quick-btns { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
-.quick-btn {
+.user-panel-email {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.user-panel-bio {
+  font-size: 13px;
+  color: var(--muted2);
+  line-height: 1.5;
+  margin-bottom: 14px;
+  min-height: 18px;
+}
+
+.user-panel-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.panel-btn {
   background: var(--surface);
   border: 1px solid var(--border);
   color: var(--muted2);
@@ -591,8 +602,21 @@ body::after {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
+  font-family: 'DM Sans', sans-serif;
 }
-.quick-btn:hover { border-color: rgba(77,240,192,0.3); color: var(--accent); background: rgba(77,240,192,0.04); }
+.panel-btn:hover { border-color: rgba(77,240,192,0.3); color: var(--accent); background: rgba(77,240,192,0.04); }
+.panel-btn.signout { color: var(--muted); }
+.panel-btn.signout:hover { border-color: rgba(240,106,77,0.4); color: var(--danger); background: rgba(240,106,77,0.06); }
+
+/* ===== LAYOUT ===== */
+.app-layout {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 28px 16px;
+}
+
+.main-col { min-width: 0; }
 
 /* ===== TABS ===== */
 .tab { display: none; animation: fadeIn 0.25s ease; }
@@ -1071,16 +1095,17 @@ body::after {
   margin-top: 4px;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 600px) {
   .auth-wrap { grid-template-columns: 1fr; }
   .auth-brand { display: none; }
-  .app-layout { grid-template-columns: 1fr; }
-  .sidebar { display: none; }
-  .topnav { padding: 0 16px; }
-  .nav-tabs { gap: 2px; }
-  .nav-tab { padding: 7px 10px; font-size: 12px; }
+  .topnav { padding: 0 10px; gap: 6px; }
+  .nav-brand { font-size: 17px; }
+  .nav-tabs { padding: 3px; gap: 1px; }
+  .nav-tab { padding: 6px 8px; font-size: 11px; gap: 3px; }
+  .tab-label { display: none; }
   .monet-grid { grid-template-columns: 1fr; }
   .form-row { grid-template-columns: 1fr; }
+  .app-layout { padding: 16px 10px; }
 }
 </style>
 </head>
@@ -1148,26 +1173,23 @@ body::after {
 
     <div class="nav-tabs">
       <button class="nav-tab active" id="navFeed" onclick="showTab('feed')">
-        <span>🏠</span> Feed
+        <span>🏠</span><span class="tab-label"> Feed</span>
       </button>
       <button class="nav-tab" id="navNotifs" onclick="showTab('notifications')">
-        <span>🔔</span> Alerts
+        <span>🔔</span><span class="tab-label"> Alerts</span>
         <span id="notifCount" class="notif-dot" style="display:none"></span>
       </button>
       <button class="nav-tab" id="navMonet" onclick="showTab('monet')">
-        <span>💰</span> Earn
+        <span>💰</span><span class="tab-label"> Earn</span>
       </button>
       <button class="nav-tab" id="navProfile" onclick="showTab('profile')">
-        <span>👤</span> Profile
+        <span>👤</span><span class="tab-label"> Profile</span>
       </button>
     </div>
 
     <div class="nav-right">
-      <div class="user-chip" onclick="showTab('profile')">
-        <img class="user-chip-avatar" id="topAvatar" src="" onerror="this.style.display='none'" />
-        <span class="user-chip-name" id="topName">—</span>
-      </div>
-      <button class="btn-ghost" onclick="logout()" style="padding:7px 14px;font-size:13px;">Sign out</button>
+      <img class="nav-avatar" id="topAvatar" src="" onerror="this.style.display='none'" />
+      <button class="nav-signout" onclick="logout()" title="Sign out">&#8594;</button>
     </div>
   </nav>
 
@@ -1278,33 +1300,6 @@ body::after {
 
     </div><!-- /main-col -->
 
-    <!-- Sidebar -->
-    <div class="sidebar">
-      <div class="sidebar-card">
-        <h4>Your Stats</h4>
-        <div class="stat-row">
-          <span class="stat-label">Followers</span>
-          <span class="stat-value" id="sideFollowers">0</span>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">Watch Hours</span>
-          <span class="stat-value" id="sideWatch">0</span>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">Earnings</span>
-          <span class="stat-value" style="color:var(--accent)">$<span id="sideEarnings">0.00</span></span>
-        </div>
-      </div>
-
-      <div class="sidebar-card">
-        <h4>Quick Access</h4>
-        <div class="quick-btns">
-          <button class="quick-btn" onclick="showTab('monet')">💰 Monetization Dashboard</button>
-          <button class="quick-btn" onclick="showTab('profile')">✏️ Edit Profile</button>
-          <button class="quick-btn" onclick="showTab('notifications')">🔔 View Notifications</button>
-        </div>
-      </div>
-    </div>
 
   </div><!-- /app-layout -->
 
@@ -1377,16 +1372,15 @@ function onLogin(){
   byId('authScreen').style.display = 'none';
   byId('mainApp').style.display = 'block';
 
-  // Populate top nav
+  // Top nav avatar
   const av = byId('topAvatar');
-  if(currentUser.profile_pic){ av.src = currentUser.profile_pic; av.style.display = ''; }
-  byId('topName').textContent = currentUser.name || currentUser.email;
+  if(currentUser.profile_pic){ av.src = currentUser.profile_pic; av.style.display = 'block'; }
 
   // Composer avatar
   const ca = byId('composerAvatar');
   if(currentUser.profile_pic){ ca.src = currentUser.profile_pic; ca.style.display = ''; }
 
-  // Profile section
+  // Profile tab section
   byId('profileName').textContent = currentUser.name || '—';
   byId('profileEmail').textContent = currentUser.email;
   const pa = byId('profileAvatar');
@@ -1623,7 +1617,8 @@ async function loadProfilePosts(){
 
 async function updateBio(){
   if(!currentUser) return;
-  await fetch(API+'/update_bio',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:currentUser.email,bio:byId('profileBio').value.trim()})});
+  const bio = byId('profileBio').value.trim();
+  await fetch(API+'/update_bio',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:currentUser.email,bio})});
   const saved=document.createElement('span');
   saved.style.cssText='color:var(--accent);font-size:13px;margin-left:10px;';
   saved.textContent='Saved ✓';
@@ -1640,9 +1635,6 @@ async function loadMonetization(){
   byId('monWatch').textContent=j.watch_hours;
   byId('monEarnings').textContent=(j.earnings||0).toFixed(2);
   byId('monStatus').textContent=j.followers>=1000&&j.watch_hours>=4000?'✅ Eligible':'⏳ Growing';
-  byId('sideFollowers').textContent=j.followers;
-  byId('sideWatch').textContent=j.watch_hours;
-  byId('sideEarnings').textContent=(j.earnings||0).toFixed(2);
 }
 
 async function createAd(){

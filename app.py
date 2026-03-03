@@ -37,6 +37,10 @@ os.makedirs(os.path.join(APP_DIR, "data"), exist_ok=True)
 
 db = SQLAlchemy(app)
 
+# ---------- Utilities ----------
+def now_ts():
+    return datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
 # ---------- Models ----------
 
 class User(db.Model):
@@ -142,10 +146,6 @@ class Ad(db.Model):
             "budget": self.budget, "impressions": self.impressions, "clicks": self.clicks,
         }
 
-
-# ---------- Utilities ----------
-def now_ts():
-    return datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
 # ---------- Create tables ----------
 with app.app_context():
@@ -1973,3 +1973,4 @@ def api_ads_impression():
 # ══════════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=app.config["PORT"], debug=True)
+

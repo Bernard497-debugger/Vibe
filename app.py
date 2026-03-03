@@ -1,170 +1,161 @@
-# app.py - VibeNet (Render PostgreSQL Compatible + Sessions)
+# app.py - VibeNet  (SQLAlchemy ORM  |  SQLite locally  |  PostgreSQL on Render)
 import os
 import uuid
 import datetime
 import json as _json
-from flask import Flask, request, jsonify, send_from_directory, g, render_template_string, session
+from flask import Flask, request, jsonify, send_from_directory, session, render_template_string
 
-# ---------- Database Imports ----------
-import sqlite3
-try:
-    import psycopg2
-    from psycopg2.extras import RealDictCursor
-    HAS_POSTGRES_LIB = True
-except ImportError:
-    HAS_POSTGRES_LIB = False
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import func
 
 # ---------- Config ----------
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(APP_DIR, "data")
+APP_DIR   = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.path.join(APP_DIR, "uploads")
-DB_PATH = os.path.join(DATA_DIR, "vibenet.db")
-os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = Flask(__name__, static_folder=None)
-app.config['MAX_CONTENT_LENGTH'] = 300 * 1024 * 1024  
-app.config['PORT'] = int(os.environ.get("PORT", 5000))
-DATABASE_URL = os.environ.get("DATABASE_URL")
-app.secret_key = os.environ.get("SECRET_KEY", "vibenet_secret_key_change_this_in_production")
+app.config["MAX_CONTENT_LENGTH"] = 300 * 1024 * 1024
+app.config["PORT"] = int(os.environ.get("PORT", 5000))
+app.secret_key = os.environ.get("SECRET_KEY", "vibenet_secret_dev")
 
-# ---------- Database Logic (Hybrid SQLite/Postgres) ----------
+# SQLAlchemy: prefer DATABASE_URL env var (Render PostgreSQL), fall back to SQLite
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+if DATABASE_URL.startswith("postgres://"):          # Render uses legacy scheme
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-def get_db_type():
-    if DATABASE_URL and HAS_POSTGRES_LIB:
-        return 'postgres'
-    return 'sqlite'
+app.config["SQLALCHEMY_DATABASE_URI"] = (
+    DATABASE_URL if DATABASE_URL
+    else f"sqlite:///{os.path.join(APP_DIR, 'data', 'vibenet.db')}"
+)
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+    "pool_recycle": 280,   # keep Render/Postgres connections alive
+    "pool_pre_ping": True,
+}
 
-class PostgresCursorWrapper:
-    def __init__(self, original_cursor):
-        self.cursor = original_cursor
-        self.lastrowid = None
+os.makedirs(os.path.join(APP_DIR, "data"), exist_ok=True)
 
-    def execute(self, sql, args=None):
-        sql = sql.replace('?', '%s')
-        is_insert = sql.strip().upper().startswith("INSERT")
-        if is_insert:
-            sql += " RETURNING id"
-        if args is None:
-            self.cursor.execute(sql)
-        else:
-            self.cursor.execute(sql, args)
-        if is_insert:
-            res = self.cursor.fetchone()
-            if res:
-                self.lastrowid = res['id']
+db = SQLAlchemy(app)
 
-    def fetchone(self):
-        return self.cursor.fetchone()
+# ---------- Models ----------
 
-    def fetchall(self):
-        return self.cursor.fetchall()
-    
-    def __getattr__(self, name):
-        return getattr(self.cursor, name)
+class User(db.Model):
+    __tablename__ = "users"
+    id                = db.Column(db.Integer, primary_key=True)
+    name              = db.Column(db.Text)
+    email             = db.Column(db.Text, unique=True, nullable=False)
+    password          = db.Column(db.Text, nullable=False)
+    profile_pic       = db.Column(db.Text, default="")
+    bio               = db.Column(db.Text, default="")
+    watch_hours       = db.Column(db.Integer, default=0)
+    earnings          = db.Column(db.Float, default=0.0)
+    verified          = db.Column(db.Integer, default=0)   # 1 = VibeNet Verified
+    created_at        = db.Column(db.Text, default=lambda: now_ts())
 
-def get_db():
-    if getattr(g, "_db", None) is None:
-        if get_db_type() == 'postgres':
-            conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
-            g._db = conn
-            g._db_type = 'postgres'
-        else:
-            conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-            conn.row_factory = sqlite3.Row
-            g._db = conn
-            g._db_type = 'sqlite'
-    return g._db
+    def to_dict(self):
+        return {
+            "id": self.id, "name": self.name, "email": self.email,
+            "profile_pic": self.profile_pic, "bio": self.bio,
+            "watch_hours": self.watch_hours, "earnings": self.earnings,
+            "verified": bool(self.verified),
+        }
 
-def get_cursor(db):
-    if getattr(g, "_db_type", 'sqlite') == 'postgres':
-        return PostgresCursorWrapper(db.cursor())
-    return db.cursor()
 
-def init_db():
-    db = get_db()
-    cur = get_cursor(db)
-    
-    if get_db_type() == 'postgres':
-        pk_def = "SERIAL PRIMARY KEY"
-    else:
-        pk_def = "INTEGER PRIMARY KEY AUTOINCREMENT"
+class Follower(db.Model):
+    __tablename__ = "followers"
+    id             = db.Column(db.Integer, primary_key=True)
+    user_email     = db.Column(db.Text, nullable=False)   # the person being followed
+    follower_email = db.Column(db.Text, nullable=False)   # the person who follows
+    created_at     = db.Column(db.Text, default=lambda: now_ts())
+    __table_args__ = (
+        db.UniqueConstraint("user_email", "follower_email", name="uq_follow"),
+    )
 
-    cur.execute(f"""
-    CREATE TABLE IF NOT EXISTS users (
-        id {pk_def},
-        name TEXT,
-        email TEXT UNIQUE,
-        password TEXT,
-        profile_pic TEXT,
-        bio TEXT DEFAULT '',
-        watch_hours INTEGER DEFAULT 0,
-        earnings REAL DEFAULT 0,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )""")
-    cur.execute(f"""
-    CREATE TABLE IF NOT EXISTS followers (
-        id {pk_def},
-        user_email TEXT,
-        follower_email TEXT,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )""")
-    cur.execute(f"""
-    CREATE TABLE IF NOT EXISTS posts (
-        id {pk_def},
-        author_email TEXT,
-        author_name TEXT,
-        profile_pic TEXT,
-        text TEXT,
-        file_url TEXT,
-        timestamp TEXT,
-        reactions_json TEXT DEFAULT '{{}}',
-        comments_count INTEGER DEFAULT 0
-    )""")
-    cur.execute(f"""
-    CREATE TABLE IF NOT EXISTS user_reactions (
-        id {pk_def},
-        user_email TEXT,
-        post_id INTEGER,
-        emoji TEXT,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(user_email, post_id)
-    )""")
-    cur.execute(f"""
-    CREATE TABLE IF NOT EXISTS notifications (
-        id {pk_def},
-        user_email TEXT,
-        text TEXT,
-        timestamp TEXT,
-        seen INTEGER DEFAULT 0
-    )""")
-    cur.execute(f"""
-    CREATE TABLE IF NOT EXISTS ads (
-        id {pk_def},
-        title TEXT,
-        owner_email TEXT,
-        budget REAL DEFAULT 0,
-        impressions INTEGER DEFAULT 0,
-        clicks INTEGER DEFAULT 0,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )""")
-    db.commit()
 
-@app.teardown_appcontext
-def close_db(exception):
-    db = getattr(g, "_db", None)
-    if db is not None:
-        db.close()
+class Post(db.Model):
+    __tablename__  = "posts"
+    id             = db.Column(db.Integer, primary_key=True)
+    author_email   = db.Column(db.Text, nullable=False)
+    author_name    = db.Column(db.Text)
+    profile_pic    = db.Column(db.Text, default="")
+    text           = db.Column(db.Text, default="")
+    file_url       = db.Column(db.Text, default="")
+    timestamp      = db.Column(db.Text, default=lambda: now_ts())
+    reactions_json = db.Column(db.Text, default='{"👍":0,"❤️":0,"😂":0}')
+    comments_count = db.Column(db.Integer, default=0)
 
+    def reactions(self):
+        try:
+            return _json.loads(self.reactions_json or "{}")
+        except Exception:
+            return {"👍": 0, "❤️": 0, "😂": 0}
+
+    def to_dict(self, user_reaction=None, author_verified=False):
+        return {
+            "id": self.id, "author_email": self.author_email,
+            "author_name": self.author_name, "profile_pic": self.profile_pic,
+            "text": self.text, "file_url": self.file_url,
+            "timestamp": self.timestamp, "reactions": self.reactions(),
+            "comments_count": self.comments_count,
+            "user_reaction": user_reaction,
+            "author_verified": author_verified,
+        }
+
+
+class UserReaction(db.Model):
+    __tablename__ = "user_reactions"
+    id         = db.Column(db.Integer, primary_key=True)
+    user_email = db.Column(db.Text, nullable=False)
+    post_id    = db.Column(db.Integer, db.ForeignKey("posts.id"), nullable=False)
+    emoji      = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.Text, default=lambda: now_ts())
+    __table_args__ = (
+        db.UniqueConstraint("user_email", "post_id", name="uq_reaction"),
+    )
+
+
+class Notification(db.Model):
+    __tablename__ = "notifications"
+    id         = db.Column(db.Integer, primary_key=True)
+    user_email = db.Column(db.Text, nullable=False)
+    text       = db.Column(db.Text)
+    timestamp  = db.Column(db.Text, default=lambda: now_ts())
+    seen       = db.Column(db.Integer, default=0)
+
+    def to_dict(self):
+        return {"id": self.id, "text": self.text, "timestamp": self.timestamp, "seen": self.seen}
+
+
+class Ad(db.Model):
+    __tablename__ = "ads"
+    id          = db.Column(db.Integer, primary_key=True)
+    title       = db.Column(db.Text)
+    owner_email = db.Column(db.Text)
+    budget      = db.Column(db.Float, default=0.0)
+    impressions = db.Column(db.Integer, default=0)
+    clicks      = db.Column(db.Integer, default=0)
+    created_at  = db.Column(db.Text, default=lambda: now_ts())
+
+    def to_dict(self):
+        return {
+            "id": self.id, "title": self.title, "owner_email": self.owner_email,
+            "budget": self.budget, "impressions": self.impressions, "clicks": self.clicks,
+        }
+
+
+# ---------- Utilities ----------
 def now_ts():
     return datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
+# ---------- Create tables ----------
 with app.app_context():
-    init_db()
+    db.create_all()
 
+# ---------- Static uploads ----------
 @app.route("/uploads/<path:filename>")
 def uploaded_file(filename):
     return send_from_directory(UPLOAD_DIR, filename)
+
 
 # ---------- Frontend ----------
 HTML = r"""
@@ -899,6 +890,22 @@ body::after {
 .play-hint span { font-size: 44px; filter: drop-shadow(0 2px 10px rgba(0,0,0,0.7)); }
 .video-wrap.playing .play-hint { opacity: 0; }
 
+.vbadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #4DF0C0, #7B6EF6);
+  color: #030a0e;
+  font-size: 10px;
+  font-weight: 900;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  margin-left: 4px;
+  vertical-align: middle;
+  line-height: 1;
+}
+
 /* ===== SECTION HEADER ===== */
 .section-header {
   margin-bottom: 20px;
@@ -1230,13 +1237,14 @@ body::after {
         </div>
       </div>
 
-      <!-- Monetization Tab -->
+      <!-- Monetization / Payments Tab -->
       <div id="monet" class="tab">
         <div class="section-header">
-          <h2>Earnings & Ads</h2>
-          <p>Track your revenue and manage ad campaigns</p>
+          <h2>Earnings &amp; Payments</h2>
+          <p>Grow your revenue, run ads, and get verified</p>
         </div>
 
+        <!-- Stats row -->
         <div class="monet-grid">
           <div class="monet-card">
             <div class="monet-card-label">Followers</div>
@@ -1256,25 +1264,24 @@ body::after {
           </div>
         </div>
 
-        <div class="ad-form">
-          <div class="monet-section-title">Create Ad Campaign</div>
-          <div class="form-row">
-            <div class="form-field">
-              <div class="form-label">Campaign Title</div>
-              <input id="adTitle" class="form-input" placeholder="My awesome campaign" />
+        <!-- Ad Campaign -->
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:16px;padding:22px;margin-bottom:20px">
+          <div class="monet-section-title" style="margin-bottom:14px">Create Ad Campaign</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+            <div style="flex:1;min-width:160px">
+              <div class="form-label" style="margin-bottom:6px">Campaign Title</div>
+              <input id="adTitle" class="form-input" placeholder="My awesome campaign" style="width:100%" />
             </div>
-            <div class="form-field">
-              <div class="form-label">Budget (credits)</div>
-              <input id="adBudget" class="form-input" type="number" placeholder="500" />
+            <div style="width:120px">
+              <div class="form-label" style="margin-bottom:6px">Budget</div>
+              <input id="adBudget" class="form-input" type="number" min="1" placeholder="50" style="width:100%" />
             </div>
-            <button class="btn-primary" onclick="createAd()" style="height:42px;">Launch →</button>
+            <button class="btn-primary" onclick="createAd()">Launch</button>
           </div>
         </div>
 
         <div class="monet-section-title">Active Campaigns</div>
         <div id="adsList"></div>
-      </div>
-
       <!-- Profile Tab -->
       <div id="profile" class="tab">
         <div class="section-header">
@@ -1405,7 +1412,7 @@ function showTab(tab){
 
   if(tab === 'profile') loadProfilePosts();
   if(tab === 'notifications') loadNotifications();
-  if(tab === 'monet'){ loadMonetization(); loadAds(); }
+  if(tab === 'monet'){ loadMonetization(); loadAds();  }
 }
 
 async function uploadFile(file){
@@ -1437,7 +1444,8 @@ function createPostElement(p){
   const img = document.createElement('img'); img.className='post-avatar'; img.src = p.profile_pic || '';
   img.onerror = ()=> { img.style.background='var(--surface)'; img.src=''; };
   const info = document.createElement('div'); info.className='post-author-info';
-  info.innerHTML = `<strong>${escapeHtml(p.author_name || 'Unknown')}</strong><div class="post-ts">${escapeHtml(p.timestamp)}</div>`;
+  const verifiedBadge = p.author_verified ? ' <span class="vbadge" title="VibeNet Verified">✦</span>' : '';
+  info.innerHTML = `<strong>${escapeHtml(p.author_name || 'Unknown')}${verifiedBadge}</strong><div class="post-ts">${escapeHtml(p.timestamp)}</div>`;
   authorWrap.append(img, info);
   header.append(authorWrap);
 
@@ -1698,6 +1706,9 @@ async function saveEditPost(){
   }
 }
 
+
+
+
 async function refreshAll(){ await loadFeed(); await loadNotifications(); await loadProfilePosts(); await loadMonetization(); await loadAds(); }
 </script>
 </body>
@@ -1711,261 +1722,254 @@ def index():
 # ---------- API: Auth ----------
 @app.route("/api/signup", methods=["POST"])
 def api_signup():
-    db = get_db()
-    cur = get_cursor(db)
-    name = request.form.get("name")
-    email = request.form.get("email", "").strip().lower()
-    password = request.form.get("password")
+    name     = request.form.get("name", "").strip()
+    email    = request.form.get("email", "").strip().lower()
+    password = request.form.get("password", "")
+    if not email or not password:
+        return jsonify({"error": "email + password required"}), 400
+
+    if User.query.filter_by(email=email).first():
+        return jsonify({"error": "User already exists"}), 400
+
     profile_pic = ""
-    if 'file' in request.files:
-        f = request.files['file']
+    if "file" in request.files:
+        f = request.files["file"]
         if f and f.filename:
             fn = f"{uuid.uuid4().hex}_{f.filename}"
             f.save(os.path.join(UPLOAD_DIR, fn))
             profile_pic = f"/uploads/{fn}"
-    if not email or not password:
-        return jsonify({"error":"email+password required"}), 400
-    try:
-        cur.execute("INSERT INTO users (name,email,password,profile_pic) VALUES (?,?,?,?)", (name, email, password, profile_pic))
-        db.commit()
-    except Exception as e:
-        if "unique" in str(e).lower():
-            return jsonify({"error":"User already exists"}), 400
-        return jsonify({"error": str(e)}), 500
-    user = {"name": name, "email": email, "profile_pic": profile_pic, "bio": "", "watch_hours": 0, "earnings": 0}
-    session['user_email'] = email
-    return jsonify({"user": user})
+
+    user = User(name=name, email=email, password=password, profile_pic=profile_pic)
+    db.session.add(user)
+    db.session.commit()
+    session["user_email"] = email
+    return jsonify({"user": user.to_dict()})
+
 
 @app.route("/api/login", methods=["POST"])
 def api_login():
-    data = request.get_json() or {}
-    email = (data.get("email") or "").strip().lower()
-    password = data.get("password")
-    db = get_db()
-    cur = get_cursor(db)
-    cur.execute("SELECT name,email,profile_pic,bio,watch_hours,earnings FROM users WHERE email=? AND password=?", (email, password))
-    r = cur.fetchone()
-    if not r:
-        return jsonify({"error":"Invalid credentials"}), 401
-    session['user_email'] = email
-    return jsonify({"user": dict(r)})
+    data     = request.get_json() or {}
+    email    = data.get("email", "").strip().lower()
+    password = data.get("password", "")
+    user     = User.query.filter_by(email=email, password=password).first()
+    if not user:
+        return jsonify({"error": "Invalid credentials"}), 401
+    session["user_email"] = email
+    return jsonify({"user": user.to_dict()})
+
 
 @app.route("/api/logout", methods=["POST"])
 def api_logout():
     session.clear()
     return jsonify({"status": "logged out"})
 
+
 @app.route("/api/me")
 def api_me():
-    email = session.get('user_email')
+    email = session.get("user_email")
     if not email:
         return jsonify({"user": None})
-    db = get_db()
-    cur = get_cursor(db)
-    cur.execute("SELECT name,email,profile_pic,bio,watch_hours,earnings FROM users WHERE email=?", (email,))
-    r = cur.fetchone()
-    return jsonify({"user": dict(r) if r else None})
+    user = User.query.filter_by(email=email).first()
+    return jsonify({"user": user.to_dict() if user else None})
+
 
 # ---------- Upload ----------
 @app.route("/api/upload", methods=["POST"])
 def api_upload():
-    if 'file' not in request.files:
-        return jsonify({"error":"No file"}), 400
-    f = request.files['file']
-    if f.filename == "":
-        return jsonify({"error":"No filename"}), 400
+    if "file" not in request.files:
+        return jsonify({"error": "No file"}), 400
+    f = request.files["file"]
+    if not f.filename:
+        return jsonify({"error": "No filename"}), 400
     fn = f"{uuid.uuid4().hex}_{f.filename}"
     f.save(os.path.join(UPLOAD_DIR, fn))
     return jsonify({"url": f"/uploads/{fn}"})
 
+
 # ---------- Posts ----------
-@app.route("/api/posts", methods=["GET","POST"])
+@app.route("/api/posts", methods=["GET", "POST"])
 def api_posts():
-    db = get_db()
-    cur = get_cursor(db)
     if request.method == "GET":
-        cur.execute("SELECT * FROM posts ORDER BY id DESC")
-        rows = cur.fetchall()
-        out = []
-        for r in rows:
-            rec = dict(r)
-            try: rec['reactions'] = _json.loads(rec.get('reactions_json','{}'))
-            except: rec['reactions'] = {'👍':0,'❤️':0,'😂':0}
-            rec['user_reaction'] = None
-            out.append(rec)
-        return jsonify(out)
-    else:
-        data = request.get_json() or {}
-        ts = now_ts()
-        rj = _json.dumps({'👍':0,'❤️':0,'😂':0})
-        cur.execute("INSERT INTO posts (author_email,author_name,profile_pic,text,file_url,timestamp,reactions_json,comments_count) VALUES (?,?,?,?,?,?,?,?)",
-            (data.get('author_email'), data.get('author_name'), data.get('profile_pic',''), data.get('text',''), data.get('file_url',''), ts, rj, 0))
-        db.commit()
-        post_id = cur.lastrowid
-        cur.execute("SELECT * FROM posts WHERE id=?", (post_id,))
-        rec = dict(cur.fetchone())
-        rec['reactions'] = _json.loads(rec['reactions_json'])
-        rec['user_reaction'] = None
-        return jsonify(rec)
+        posts = Post.query.order_by(Post.id.desc()).all()
+        # Build a verified lookup map
+        emails = list({p.author_email for p in posts})
+        verified_map = {}
+        if emails:
+            users = User.query.filter(User.email.in_(emails)).all()
+            verified_map = {u.email: bool(u.verified) for u in users}
+        return jsonify([p.to_dict(author_verified=verified_map.get(p.author_email, False)) for p in posts])
 
-
-# ---------- Edit / Delete Post ----------
-@app.route("/api/posts/<int:post_id>", methods=["DELETE","PATCH"])
-def api_post_modify(post_id):
     data = request.get_json() or {}
+    post = Post(
+        author_email=data.get("author_email"),
+        author_name=data.get("author_name"),
+        profile_pic=data.get("profile_pic", ""),
+        text=data.get("text", ""),
+        file_url=data.get("file_url", ""),
+    )
+    db.session.add(post)
+    db.session.commit()
+    return jsonify(post.to_dict())
+
+
+@app.route("/api/posts/<int:post_id>", methods=["DELETE", "PATCH"])
+def api_post_modify(post_id):
+    data  = request.get_json() or {}
     email = data.get("email")
-    db = get_db()
-    cur = get_cursor(db)
-    cur.execute("SELECT author_email FROM posts WHERE id=?", (post_id,))
-    row = cur.fetchone()
-    if not row:
-        return jsonify({"error": "Post not found"}), 404
-    if row['author_email'] != email:
+    post  = Post.query.get_or_404(post_id)
+    if post.author_email != email:
         return jsonify({"error": "Unauthorized"}), 403
+
     if request.method == "DELETE":
-        cur.execute("DELETE FROM posts WHERE id=?", (post_id,))
-        cur.execute("DELETE FROM user_reactions WHERE post_id=?", (post_id,))
-        db.commit()
+        UserReaction.query.filter_by(post_id=post_id).delete()
+        db.session.delete(post)
+        db.session.commit()
         return jsonify({"success": True})
-    else:  # PATCH
-        text = data.get("text", "").strip()
-        if not text:
-            return jsonify({"error": "Text required"}), 400
-        cur.execute("UPDATE posts SET text=? WHERE id=?", (text, post_id))
-        db.commit()
-        return jsonify({"success": True})
+
+    text = data.get("text", "").strip()
+    if not text:
+        return jsonify({"error": "Text required"}), 400
+    post.text = text
+    db.session.commit()
+    return jsonify({"success": True})
+
 
 # ---------- React ----------
 @app.route("/api/react", methods=["POST"])
 def api_react_post():
-    data = request.get_json() or {}
-    post_id = data.get("post_id")
-    emoji = data.get("emoji")
+    data       = request.get_json() or {}
+    post_id    = data.get("post_id")
+    emoji      = data.get("emoji")
     user_email = data.get("user_email")
-    db = get_db()
-    cur = get_cursor(db)
-    cur.execute("SELECT id,reactions_json,author_email FROM posts WHERE id=?", (post_id,))
-    row = cur.fetchone()
-    if not row:
-        return jsonify({"error":"Post not found"}), 404
-    reactions = _json.loads(row['reactions_json'] or '{}')
-    cur.execute("SELECT emoji FROM user_reactions WHERE user_email=? AND post_id=?", (user_email, post_id))
-    prev = cur.fetchone()
-    prev_emoji = prev['emoji'] if prev else None
+
+    post = Post.query.get(post_id)
+    if not post:
+        return jsonify({"error": "Post not found"}), 404
+
+    reactions  = post.reactions()
+    prev_react = UserReaction.query.filter_by(user_email=user_email, post_id=post_id).first()
+    prev_emoji = prev_react.emoji if prev_react else None
+
     if prev_emoji == emoji:
-        return jsonify({"success":True, "reactions": reactions})
-    if prev_emoji:
-        reactions[prev_emoji] = max(0, reactions.get(prev_emoji,0)-1)
-        cur.execute("DELETE FROM user_reactions WHERE user_email=? AND post_id=?", (user_email, post_id))
-    try:
-        cur.execute("INSERT INTO user_reactions (user_email,post_id,emoji) VALUES (?,?,?)", (user_email, post_id, emoji))
-    except: pass
-    reactions[emoji] = reactions.get(emoji,0) + 1
-    cur.execute("UPDATE posts SET reactions_json=? WHERE id=?", (_json.dumps(reactions), post_id))
-    db.commit()
-    if row['author_email'] != user_email:
-        cur.execute("INSERT INTO notifications (user_email,text,timestamp) VALUES (?,?,?)", (row['author_email'], f"{emoji} reaction on your post", now_ts()))
-        db.commit()
-    return jsonify({"success":True, "reactions": reactions})
+        return jsonify({"success": True, "reactions": reactions})
+
+    if prev_react:
+        reactions[prev_emoji] = max(0, reactions.get(prev_emoji, 0) - 1)
+        db.session.delete(prev_react)
+
+    new_react = UserReaction(user_email=user_email, post_id=post_id, emoji=emoji)
+    db.session.add(new_react)
+    reactions[emoji] = reactions.get(emoji, 0) + 1
+    post.reactions_json = _json.dumps(reactions)
+
+    if post.author_email != user_email:
+        notif = Notification(user_email=post.author_email,
+                             text=f"{emoji} reaction on your post")
+        db.session.add(notif)
+
+    db.session.commit()
+    return jsonify({"success": True, "reactions": reactions})
+
 
 # ---------- Notifications ----------
 @app.route("/api/notifications/<email>")
 def api_notifications_get(email):
-    db = get_db()
-    cur = get_cursor(db)
-    cur.execute("SELECT * FROM notifications WHERE user_email=? ORDER BY id DESC", (email,))
-    return jsonify([dict(r) for r in cur.fetchall()])
+    notifs = Notification.query.filter_by(user_email=email).order_by(Notification.id.desc()).all()
+    return jsonify([n.to_dict() for n in notifs])
+
 
 # ---------- Monetization / Profile ----------
 @app.route("/api/monetization/<email>")
 def api_monetization_get(email):
-    db = get_db()
-    cur = get_cursor(db)
-    cur.execute("SELECT COUNT(*) as cnt FROM followers WHERE user_email=?", (email,))
-    res = cur.fetchone()
-    followers = res['cnt'] if res else 0
-    cur.execute("SELECT watch_hours, earnings FROM users WHERE email=?", (email,))
-    u = cur.fetchone()
-    if u:
-        return jsonify({"followers": followers, "watch_hours": u['watch_hours'], "earnings": u['earnings']})
+    followers = Follower.query.filter_by(user_email=email).count()
+    user      = User.query.filter_by(email=email).first()
+    if user:
+        return jsonify({"followers": followers, "watch_hours": user.watch_hours, "earnings": user.earnings})
     return jsonify({"followers": 0, "watch_hours": 0, "earnings": 0})
+
 
 @app.route("/api/profile/<email>")
 def api_profile_get(email):
-    db = get_db()
-    cur = get_cursor(db)
-    cur.execute("SELECT bio FROM users WHERE email=?", (email,))
-    u = cur.fetchone()
-    cur.execute("SELECT * FROM posts WHERE author_email=? ORDER BY id DESC", (email,))
-    posts = [dict(r) for r in cur.fetchall()]
-    return jsonify({"bio": u['bio'] if u else "", "posts": posts})
+    user  = User.query.filter_by(email=email).first()
+    posts = Post.query.filter_by(author_email=email).order_by(Post.id.desc()).all()
+    return jsonify({
+        "bio":   user.bio if user else "",
+        "posts": [p.to_dict() for p in posts],
+    })
+
 
 @app.route("/api/update_bio", methods=["POST"])
 def api_update_bio():
-    data = request.get_json() or {}
-    db = get_db()
-    cur = get_cursor(db)
-    cur.execute("UPDATE users SET bio=? WHERE email=?", (data.get("bio"), data.get("email")))
-    db.commit()
+    data  = request.get_json() or {}
+    user  = User.query.filter_by(email=data.get("email")).first()
+    if user:
+        user.bio = data.get("bio", "")
+        db.session.commit()
     return jsonify({"success": True})
+
 
 # ---------- Following ----------
 @app.route("/api/follow", methods=["POST"])
 def api_follow():
-    data = request.get_json() or {}
+    data     = request.get_json() or {}
     follower = data.get("follower_email")
-    target = data.get("target_email")
-    db = get_db()
-    cur = get_cursor(db)
-    cur.execute("SELECT id FROM followers WHERE user_email=? AND follower_email=?", (target, follower))
-    if cur.fetchone():
-        cur.execute("DELETE FROM followers WHERE user_email=? AND follower_email=?", (target, follower))
-        db.commit()
+    target   = data.get("target_email")
+
+    existing = Follower.query.filter_by(user_email=target, follower_email=follower).first()
+    if existing:
+        db.session.delete(existing)
+        db.session.commit()
         return jsonify({"success": True, "status": "unfollowed"})
-    cur.execute("INSERT INTO followers (user_email, follower_email) VALUES (?,?)", (target, follower))
-    cur.execute("INSERT INTO notifications (user_email, text, timestamp) VALUES (?,?,?)", (target, f"{follower} followed you", now_ts()))
-    db.commit()
+
+    db.session.add(Follower(user_email=target, follower_email=follower))
+    db.session.add(Notification(user_email=target, text=f"{follower} followed you"))
+    db.session.commit()
     return jsonify({"success": True, "status": "followed"})
+
 
 @app.route("/api/is_following")
 def api_is_following():
     f = request.args.get("f")
     t = request.args.get("t")
-    db = get_db()
-    cur = get_cursor(db)
-    cur.execute("SELECT id FROM followers WHERE user_email=? AND follower_email=?", (t, f))
-    return jsonify({"following": bool(cur.fetchone())})
+    exists = Follower.query.filter_by(user_email=t, follower_email=f).first() is not None
+    return jsonify({"following": exists})
+
 
 # ---------- Watch / Ads ----------
 @app.route("/api/watch", methods=["POST"])
 def api_watch():
-    data = request.get_json() or {}
-    viewer = data.get("viewer")
+    data    = request.get_json() or {}
+    viewer  = data.get("viewer")
     post_id = data.get("post_id")
-    db = get_db()
-    cur = get_cursor(db)
-    cur.execute("SELECT author_email FROM posts WHERE id=?", (post_id,))
-    row = cur.fetchone()
-    if row and row['author_email'] != viewer:
-        cur.execute("UPDATE users SET watch_hours=watch_hours+1, earnings=earnings+0.1 WHERE email=?", (row['author_email'],))
-        db.commit()
+    post    = Post.query.get(post_id)
+    if post and post.author_email != viewer:
+        author = User.query.filter_by(email=post.author_email).first()
+        if author:
+            author.watch_hours += 1
+            author.earnings    += 0.1
+            db.session.commit()
     return jsonify({"success": True})
 
-@app.route("/api/ads", methods=["GET","POST"])
+
+@app.route("/api/ads", methods=["GET", "POST"])
 def api_ads():
-    db = get_db()
-    cur = get_cursor(db)
     if request.method == "POST":
         data = request.get_json() or {}
-        cur.execute("INSERT INTO ads (title, owner_email, budget) VALUES (?,?,?)", (data.get('title'), data.get('owner'), data.get('budget')))
-        db.commit()
+        ad   = Ad(title=data.get("title"), owner_email=data.get("owner"), budget=data.get("budget", 0))
+        db.session.add(ad)
+        db.session.commit()
         return jsonify({"message": "Ad created"})
-    cur.execute("SELECT * FROM ads ORDER BY id DESC")
-    return jsonify([dict(r) for r in cur.fetchall()])
+    ads = Ad.query.order_by(Ad.id.desc()).all()
+    return jsonify([a.to_dict() for a in ads])
+
 
 @app.route("/api/ads/impression", methods=["POST"])
 def api_ads_impression():
     return jsonify({"success": True})
 
+
+
+
+# ══════════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=app.config['PORT'], debug=True)
+    app.run(host="0.0.0.0", port=app.config["PORT"], debug=True)

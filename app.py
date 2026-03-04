@@ -65,6 +65,34 @@ class User(db.Model):
         }
 
 
+class UserWallet(db.Model):
+    __tablename__ = "user_wallets"
+    id                = db.Column(db.Integer, primary_key=True)
+    user_email        = db.Column(db.Text, db.ForeignKey("users.email"), nullable=False, unique=True)
+    wallet_type       = db.Column(db.Text, default="orange_money")  # orange_money, stripe, paypal, etc.
+    account_number    = db.Column(db.Text, nullable=False)  # Orange Money phone number or account ID
+    account_holder    = db.Column(db.Text)  # Name of account holder
+    verified          = db.Column(db.Integer, default=0)  # 0 = unverified, 1 = verified
+    balance           = db.Column(db.Float, default=0.0)  # Current balance
+    total_received    = db.Column(db.Float, default=0.0)  # Total earnings received
+    created_at        = db.Column(db.Text, default=lambda: now_ts())
+    verified_at       = db.Column(db.Text, nullable=True)
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_email": self.user_email,
+            "wallet_type": self.wallet_type,
+            "account_number": self.account_number,
+            "account_holder": self.account_holder,
+            "verified": bool(self.verified),
+            "balance": round(self.balance, 2),
+            "total_received": round(self.total_received, 2),
+            "created_at": self.created_at,
+            "verified_at": self.verified_at,
+        }
+
+
 class Follower(db.Model):
     __tablename__ = "followers"
     id             = db.Column(db.Integer, primary_key=True)
@@ -189,7 +217,8 @@ class PaidCampaign(db.Model):
     description     = db.Column(db.Text, default="")
     budget          = db.Column(db.Float, default=0.0)
     spent           = db.Column(db.Float, default=0.0)
-    status          = db.Column(db.Text, default="active")  # active, paused, completed
+    status          = db.Column(db.Text, default="pending")  # pending, active, paused, completed, expired
+    payment_status  = db.Column(db.Text, default="unpaid")   # unpaid, paid, failed, refunded
     impressions     = db.Column(db.Integer, default=0)
     clicks          = db.Column(db.Integer, default=0)
     conversions     = db.Column(db.Integer, default=0)
@@ -212,6 +241,7 @@ class PaidCampaign(db.Model):
             "budget": self.budget,
             "spent": round(self.spent, 2),
             "status": self.status,
+            "payment_status": self.payment_status,
             "impressions": self.impressions,
             "clicks": self.clicks,
             "conversions": self.conversions,
@@ -222,6 +252,141 @@ class PaidCampaign(db.Model):
             "roi": round(roi, 2),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+        }
+
+
+class Payment(db.Model):
+    __tablename__ = "payments"
+    id              = db.Column(db.Integer, primary_key=True)
+    user_email      = db.Column(db.Text, nullable=False)
+    campaign_id     = db.Column(db.Integer, db.ForeignKey("paid_campaigns.id"), nullable=False)
+    amount          = db.Column(db.Float, nullable=False)
+    status          = db.Column(db.Text, default="pending")  # pending, completed, failed, refunded
+    payment_method  = db.Column(db.Text)  # stripe, paypal, credit_card, etc.
+    transaction_id  = db.Column(db.Text, unique=True)  # External payment processor ID
+    description     = db.Column(db.Text, default="")
+    created_at      = db.Column(db.Text, default=lambda: now_ts())
+    completed_at    = db.Column(db.Text, nullable=True)
+    refunded_at     = db.Column(db.Text, nullable=True)
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_email": self.user_email,
+            "campaign_id": self.campaign_id,
+            "amount": round(self.amount, 2),
+            "status": self.status,
+            "payment_method": self.payment_method,
+            "transaction_id": self.transaction_id,
+            "description": self.description,
+            "created_at": self.created_at,
+            "completed_at": self.completed_at,
+            "refunded_at": self.refunded_at,
+        }
+
+
+class OrangeMoneyAccount(db.Model):
+    __tablename__ = "orange_money_accounts"
+    id              = db.Column(db.Integer, primary_key=True)
+    user_email      = db.Column(db.Text, unique=True, nullable=False)
+    phone_number    = db.Column(db.Text, nullable=False)  # Orange Money phone number
+    account_holder  = db.Column(db.Text, nullable=False)  # Name of account holder
+    country         = db.Column(db.Text, default="")  # Country code (e.g., SN, CI, CM, etc.)
+    is_verified     = db.Column(db.Integer, default=0)  # 1 = verified account
+    created_at      = db.Column(db.Text, default=lambda: now_ts())
+    verified_at     = db.Column(db.Text, nullable=True)
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_email": self.user_email,
+            "phone_number": self.phone_number,
+            "account_holder": self.account_holder,
+            "country": self.country,
+            "is_verified": bool(self.is_verified),
+            "created_at": self.created_at,
+            "verified_at": self.verified_at,
+        }
+
+
+class Payout(db.Model):
+    __tablename__ = "payouts"
+    id                  = db.Column(db.Integer, primary_key=True)
+    user_email          = db.Column(db.Text, nullable=False)
+    orange_account_id   = db.Column(db.Integer, db.ForeignKey("orange_money_accounts.id"), nullable=False)
+    campaign_id         = db.Column(db.Integer, db.ForeignKey("paid_campaigns.id"), nullable=True)  # Optional: from specific campaign
+    amount              = db.Column(db.Float, nullable=False)
+    status              = db.Column(db.Text, default="pending")  # pending, processing, completed, failed
+    payout_type         = db.Column(db.Text, default="campaign_earnings")  # campaign_earnings, withdrawal, bonus, etc.
+    transaction_id      = db.Column(db.Text, unique=True)  # Orange Money transaction ID
+    description         = db.Column(db.Text, default="")
+    created_at          = db.Column(db.Text, default=lambda: now_ts())
+    processed_at        = db.Column(db.Text, nullable=True)
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_email": self.user_email,
+            "orange_account_id": self.orange_account_id,
+            "campaign_id": self.campaign_id,
+            "amount": round(self.amount, 2),
+            "status": self.status,
+            "payout_type": self.payout_type,
+            "transaction_id": self.transaction_id,
+            "description": self.description,
+            "created_at": self.created_at,
+            "processed_at": self.processed_at,
+        }
+
+
+class UserEarnings(db.Model):
+    __tablename__ = "user_earnings"
+    id              = db.Column(db.Integer, primary_key=True)
+    user_email      = db.Column(db.Text, unique=True, nullable=False)
+    total_earned    = db.Column(db.Float, default=0.0)  # Total from all campaigns
+    total_paid_out  = db.Column(db.Float, default=0.0)  # Total paid to Orange Money
+    balance         = db.Column(db.Float, default=0.0)  # earned - paid_out
+    last_updated    = db.Column(db.Text, default=lambda: now_ts())
+    
+    def to_dict(self):
+        return {
+            "user_email": self.user_email,
+            "total_earned": round(self.total_earned, 2),
+            "total_paid_out": round(self.total_paid_out, 2),
+            "balance": round(self.balance, 2),
+            "last_updated": self.last_updated,
+        }
+
+
+class Payout(db.Model):
+    __tablename__ = "payouts"
+    id              = db.Column(db.Integer, primary_key=True)
+    creator_email   = db.Column(db.Text, db.ForeignKey("users.email"), nullable=False)  # Person receiving money
+    campaign_id     = db.Column(db.Integer, db.ForeignKey("paid_campaigns.id"), nullable=False)  # Campaign that generated earnings
+    wallet_id       = db.Column(db.Integer, db.ForeignKey("user_wallets.id"), nullable=False)  # Where to send money
+    amount          = db.Column(db.Float, nullable=False)  # Earnings amount
+    status          = db.Column(db.Text, default="pending")  # pending, processing, completed, failed
+    payout_method   = db.Column(db.Text, default="orange_money")  # orange_money, bank_transfer, etc.
+    transaction_id  = db.Column(db.Text, unique=True, nullable=True)  # Orange Money transaction ID
+    description     = db.Column(db.Text, default="")
+    created_at      = db.Column(db.Text, default=lambda: now_ts())
+    sent_at         = db.Column(db.Text, nullable=True)
+    failed_reason   = db.Column(db.Text, nullable=True)
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "creator_email": self.creator_email,
+            "campaign_id": self.campaign_id,
+            "wallet_id": self.wallet_id,
+            "amount": round(self.amount, 2),
+            "status": self.status,
+            "payout_method": self.payout_method,
+            "transaction_id": self.transaction_id,
+            "description": self.description,
+            "created_at": self.created_at,
+            "sent_at": self.sent_at,
+            "failed_reason": self.failed_reason,
         }
 
 
@@ -2070,6 +2235,94 @@ def api_monetization_get(email):
     return jsonify({"followers": 0, "watch_hours": 0, "earnings": 0})
 
 
+# ---------- Wallet / Orange Money ----------
+@app.route("/api/wallet/<email>", methods=["GET", "POST"])
+def api_wallet(email):
+    """Get user wallet or create/update Orange Money account"""
+    if request.method == "GET":
+        wallet = UserWallet.query.filter_by(user_email=email).first()
+        if not wallet:
+            return jsonify({"wallet": None, "message": "No wallet configured"})
+        return jsonify({"wallet": wallet.to_dict()})
+
+    # POST: Create or update wallet
+    data = request.get_json() or {}
+    
+    wallet = UserWallet.query.filter_by(user_email=email).first()
+    if not wallet:
+        wallet = UserWallet(user_email=email)
+    
+    # Update wallet details
+    wallet.wallet_type = data.get("wallet_type", "orange_money")
+    wallet.account_number = data.get("account_number", "")  # Orange Money phone number
+    wallet.account_holder = data.get("account_holder", "")
+    
+    if not wallet.account_number:
+        return jsonify({"error": "Account number (phone) required"}), 400
+    
+    db.session.add(wallet)
+    db.session.commit()
+    
+    return jsonify({
+        "success": True,
+        "wallet": wallet.to_dict(),
+        "message": "Wallet configured successfully"
+    }), 201
+
+
+@app.route("/api/wallet/<email>/verify", methods=["POST"])
+def api_wallet_verify(email):
+    """Verify Orange Money account (simulated)"""
+    wallet = UserWallet.query.filter_by(user_email=email).first()
+    if not wallet:
+        return jsonify({"error": "Wallet not found"}), 404
+    
+    data = request.get_json() or {}
+    verification_code = data.get("verification_code")
+    
+    if not verification_code:
+        return jsonify({"error": "Verification code required"}), 400
+    
+    # In production, verify with Orange Money API
+    # For now, simulate verification
+    if len(verification_code) >= 4:  # Simple check
+        wallet.verified = 1
+        wallet.verified_at = now_ts()
+        db.session.commit()
+        
+        return jsonify({
+            "success": True,
+            "wallet": wallet.to_dict(),
+            "message": "Wallet verified successfully"
+        })
+    
+    return jsonify({"error": "Invalid verification code"}), 400
+
+
+@app.route("/api/earnings/<email>", methods=["GET"])
+def api_earnings_summary(email):
+    """Get earnings summary from all campaigns"""
+    payouts = Payout.query.filter_by(creator_email=email).all()
+    wallet = UserWallet.query.filter_by(user_email=email).first()
+    user = User.query.filter_by(email=email).first()
+    
+    total_earned = sum(p.amount for p in payouts if p.status == "completed")
+    pending_payouts = sum(p.amount for p in payouts if p.status == "pending")
+    processing_payouts = sum(p.amount for p in payouts if p.status == "processing")
+    
+    return jsonify({
+        "user_email": email,
+        "total_earned": round(total_earned, 2),
+        "pending_payouts": round(pending_payouts, 2),
+        "processing_payouts": round(processing_payouts, 2),
+        "wallet_balance": wallet.balance if wallet else 0.0,
+        "watch_hours": user.watch_hours if user else 0,
+        "system_earnings": user.earnings if user else 0.0,
+        "payout_count": len(payouts),
+        "payouts": [p.to_dict() for p in payouts]
+    })
+
+
 @app.route("/api/profile/<email>")
 def api_profile_get(email):
     user  = User.query.filter_by(email=email).first()
@@ -2173,17 +2426,23 @@ def api_campaigns():
         target_audience=data.get("target_audience", ""),
         cpc=data.get("cpc", 0.5),
         cpm=data.get("cpm", 2.0),
+        status="pending",  # Start as pending until payment is made
+        payment_status="unpaid"
     )
     
     if not campaign.title:
         return jsonify({"error": "Campaign title required"}), 400
+    
+    if campaign.budget <= 0:
+        return jsonify({"error": "Campaign budget must be greater than 0"}), 400
     
     db.session.add(campaign)
     db.session.commit()
     
     return jsonify({
         "success": True,
-        "campaign": campaign.to_dict()
+        "campaign": campaign.to_dict(),
+        "message": "Campaign created. Please make a payment to activate it."
     }), 201
 
 
@@ -2288,6 +2547,7 @@ def api_campaign_analytics(campaign_id):
         "campaign_id": campaign_id,
         "title": campaign.title,
         "status": campaign.status,
+        "payment_status": campaign.payment_status,
         "budget": campaign.budget,
         "spent": round(campaign.spent, 2),
         "remaining": round(campaign.budget - campaign.spent, 2),
@@ -2299,6 +2559,579 @@ def api_campaign_analytics(campaign_id):
         "cpm": campaign.cpm,
         "cost_per_conversion": round(cost_per_conversion, 2),
         "roi": campaign.to_dict()["roi"],
+    })
+
+
+# ---------- Orange Money Accounts ----------
+@app.route("/api/orange-money/account", methods=["GET", "POST"])
+def api_orange_money_account():
+    """Get or create Orange Money account for user"""
+    if request.method == "GET":
+        user_email = request.args.get("user_email")
+        if not user_email:
+            return jsonify({"error": "user_email required"}), 400
+        
+        account = OrangeMoneyAccount.query.filter_by(user_email=user_email).first()
+        return jsonify(account.to_dict() if account else None)
+
+    # POST: Create/update Orange Money account
+    data = request.get_json() or {}
+    user_email = data.get("user_email")
+    phone_number = data.get("phone_number")
+    account_holder = data.get("account_holder")
+    country = data.get("country", "")
+
+    if not all([user_email, phone_number, account_holder]):
+        return jsonify({"error": "Missing required fields: user_email, phone_number, account_holder"}), 400
+
+    # Validate phone number format (basic validation)
+    if len(phone_number) < 8 or not phone_number.replace("+", "").replace(" ", "").isdigit():
+        return jsonify({"error": "Invalid phone number format"}), 400
+
+    # Check if account already exists
+    account = OrangeMoneyAccount.query.filter_by(user_email=user_email).first()
+    
+    if account:
+        # Update existing account
+        account.phone_number = phone_number
+        account.account_holder = account_holder
+        account.country = country
+    else:
+        # Create new account
+        account = OrangeMoneyAccount(
+            user_email=user_email,
+            phone_number=phone_number,
+            account_holder=account_holder,
+            country=country,
+            is_verified=0  # Requires verification
+        )
+        db.session.add(account)
+
+    db.session.commit()
+
+    return jsonify({
+        "success": True,
+        "account": account.to_dict(),
+        "message": "Orange Money account configured. Awaiting verification."
+    }), 201
+
+
+@app.route("/api/orange-money/account/verify", methods=["POST"])
+def api_verify_orange_money():
+    """Verify Orange Money account (admin or automated)"""
+    data = request.get_json() or {}
+    user_email = data.get("user_email")
+    verification_code = data.get("verification_code")  # Optional: could be used for verification
+    
+    account = OrangeMoneyAccount.query.filter_by(user_email=user_email).first()
+    if not account:
+        return jsonify({"error": "Orange Money account not found"}), 404
+
+    account.is_verified = 1
+    account.verified_at = now_ts()
+    db.session.commit()
+
+    return jsonify({
+        "success": True,
+        "account": account.to_dict(),
+        "message": "Orange Money account verified successfully"
+    })
+
+
+# ---------- User Earnings ----------
+@app.route("/api/earnings/<user_email>", methods=["GET"])
+def api_user_earnings(user_email):
+    """Get user's total earnings and balance"""
+    earnings = UserEarnings.query.filter_by(user_email=user_email).first()
+    
+    if not earnings:
+        # Create initial earnings record if doesn't exist
+        earnings = UserEarnings(user_email=user_email)
+        db.session.add(earnings)
+        db.session.commit()
+    
+    return jsonify(earnings.to_dict())
+
+
+# ---------- Payouts ----------
+@app.route("/api/payouts", methods=["GET", "POST"])
+def api_payouts():
+    """Get all payouts or request a new payout"""
+    if request.method == "GET":
+        user_email = request.args.get("user_email")
+        if user_email:
+            payouts = Payout.query.filter_by(user_email=user_email).order_by(Payout.id.desc()).all()
+        else:
+            payouts = Payout.query.order_by(Payout.id.desc()).all()
+        return jsonify([p.to_dict() for p in payouts])
+
+    # POST: Request a payout
+    data = request.get_json() or {}
+    user_email = data.get("user_email")
+    amount = data.get("amount")
+
+    if not user_email or not amount:
+        return jsonify({"error": "Missing required fields: user_email, amount"}), 400
+
+    # Check Orange Money account exists and is verified
+    account = OrangeMoneyAccount.query.filter_by(user_email=user_email).first()
+    if not account:
+        return jsonify({"error": "Orange Money account not configured"}), 400
+    
+    if not account.is_verified:
+        return jsonify({"error": "Orange Money account not verified"}), 400
+
+    # Check user has sufficient balance
+    earnings = UserEarnings.query.filter_by(user_email=user_email).first()
+    if not earnings or earnings.balance < amount:
+        return jsonify({"error": "Insufficient balance"}), 400
+
+    # Create payout request
+    payout = Payout(
+        user_email=user_email,
+        orange_account_id=account.id,
+        amount=amount,
+        status="pending",
+        payout_type="withdrawal",
+        description=f"Withdrawal to Orange Money {account.phone_number}"
+    )
+
+    db.session.add(payout)
+    db.session.commit()
+
+    return jsonify({
+        "success": True,
+        "payout": payout.to_dict(),
+        "message": "Payout request submitted. Processing..."
+    }), 201
+
+
+@app.route("/api/payouts/<int:payout_id>/process", methods=["POST"])
+def api_process_payout(payout_id):
+    """Process a payout to Orange Money"""
+    payout = Payout.query.get_or_404(payout_id)
+    data = request.get_json() or {}
+    
+    # In production, call Orange Money API here
+    success = data.get("success", True)
+    
+    if success:
+        payout.status = "processing"
+        payout.transaction_id = f"OM_{uuid.uuid4().hex[:12].upper()}"
+        
+        # Update user earnings
+        earnings = UserEarnings.query.filter_by(user_email=payout.user_email).first()
+        if earnings:
+            earnings.total_paid_out += payout.amount
+            earnings.balance -= payout.amount
+            earnings.last_updated = now_ts()
+        
+        db.session.commit()
+        
+        return jsonify({
+            "success": True,
+            "payout": payout.to_dict(),
+            "message": "Payout processing to Orange Money",
+            "transaction_id": payout.transaction_id
+        })
+    else:
+        payout.status = "failed"
+        db.session.commit()
+        
+        return jsonify({
+            "success": False,
+            "payout": payout.to_dict(),
+            "error": "Payout processing failed"
+        }), 400
+
+
+@app.route("/api/payouts/<int:payout_id>/complete", methods=["POST"])
+def api_complete_payout(payout_id):
+    """Mark payout as completed (after Orange Money confirms)"""
+    payout = Payout.query.get_or_404(payout_id)
+    
+    payout.status = "completed"
+    payout.processed_at = now_ts()
+    
+    db.session.commit()
+    
+    return jsonify({
+        "success": True,
+        "payout": payout.to_dict(),
+        "message": "Payout completed successfully"
+    })
+
+
+@app.route("/api/payouts/<int:payout_id>", methods=["GET"])
+def api_payout_detail(payout_id):
+    """Get payout details"""
+    payout = Payout.query.get_or_404(payout_id)
+    return jsonify(payout.to_dict())
+
+
+# ---------- Campaign Earnings (Auto-credit to user balance) ----------
+@app.route("/api/campaigns/<int:campaign_id>/complete", methods=["POST"])
+def api_complete_campaign(campaign_id):
+    """
+    Mark campaign as completed and credit earnings to user
+    Called when campaign budget is exhausted or admin completes it
+    """
+    campaign = PaidCampaign.query.get_or_404(campaign_id)
+    data = request.get_json() or {}
+    user_email = data.get("user_email")
+
+    if campaign.owner_email != user_email:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    # Calculate earnings based on platform percentage (e.g., 70% to advertiser, 30% platform)
+    # This would be the amount paid back after campaign runs
+    earnings_amount = campaign.spent * 0.70  # 70% back to platform (for VibeNet ecosystem)
+
+    campaign.status = "completed"
+    campaign.updated_at = now_ts()
+
+    # Update user earnings
+    user_earnings = UserEarnings.query.filter_by(user_email=user_email).first()
+    if not user_earnings:
+        user_earnings = UserEarnings(user_email=user_email)
+        db.session.add(user_earnings)
+
+    user_earnings.total_earned += earnings_amount
+    user_earnings.balance += earnings_amount
+    user_earnings.last_updated = now_ts()
+
+    # Create payout record for this campaign earnings
+    account = OrangeMoneyAccount.query.filter_by(user_email=user_email).first()
+    if account:
+        campaign_earning = Payout(
+            user_email=user_email,
+            orange_account_id=account.id,
+            campaign_id=campaign_id,
+            amount=earnings_amount,
+            status="completed",
+            payout_type="campaign_earnings",
+            transaction_id=f"CE_{uuid.uuid4().hex[:12].upper()}",
+            description=f"Earnings from campaign: {campaign.title}",
+            processed_at=now_ts()
+        )
+        db.session.add(campaign_earning)
+
+    db.session.commit()
+
+    return jsonify({
+        "success": True,
+        "campaign": campaign.to_dict(),
+        "earnings_credited": round(earnings_amount, 2),
+        "message": f"Campaign completed. ${round(earnings_amount, 2)} credited to your balance"
+    })
+
+
+@app.route("/api/earnings/<user_email>/payout-history", methods=["GET"])
+def api_payout_history(user_email):
+    """Get user's complete payout history"""
+    payouts = Payout.query.filter_by(user_email=user_email).order_by(Payout.id.desc()).all()
+    earnings = UserEarnings.query.filter_by(user_email=user_email).first()
+    
+    return jsonify({
+        "user_email": user_email,
+        "earnings_summary": earnings.to_dict() if earnings else None,
+        "payout_history": [p.to_dict() for p in payouts]
+    })
+
+
+# ---------- Payments ----------
+@app.route("/api/payments", methods=["GET", "POST"])
+def api_payments():
+    """Get all payments or create a new payment request"""
+    if request.method == "GET":
+        user_email = request.args.get("user_email")
+        if user_email:
+            payments = Payment.query.filter_by(user_email=user_email).order_by(Payment.id.desc()).all()
+        else:
+            payments = Payment.query.order_by(Payment.id.desc()).all()
+        return jsonify([p.to_dict() for p in payments])
+
+    # POST: Create a payment for a campaign
+    data = request.get_json() or {}
+    user_email = data.get("user_email")
+    campaign_id = data.get("campaign_id")
+    amount = data.get("amount")
+    payment_method = data.get("payment_method", "stripe")  # stripe, paypal, etc.
+
+    if not user_email or not campaign_id or not amount:
+        return jsonify({"error": "Missing required fields: user_email, campaign_id, amount"}), 400
+
+    campaign = PaidCampaign.query.get_or_404(campaign_id)
+    
+    # Verify user owns this campaign
+    if campaign.owner_email != user_email:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    # Verify payment amount doesn't exceed budget
+    if amount > campaign.budget:
+        return jsonify({"error": "Payment amount exceeds campaign budget"}), 400
+
+    payment = Payment(
+        user_email=user_email,
+        campaign_id=campaign_id,
+        amount=amount,
+        payment_method=payment_method,
+        description=f"Payment for campaign: {campaign.title}",
+        status="pending"
+    )
+
+    db.session.add(payment)
+    db.session.commit()
+
+    return jsonify({
+        "success": True,
+        "payment": payment.to_dict(),
+        "message": "Payment initiated. Please complete payment."
+    }), 201
+
+
+@app.route("/api/payments/<int:payment_id>/process", methods=["POST"])
+def api_process_payment(payment_id):
+    """Process a payment (simulate payment gateway)"""
+    payment = Payment.query.get_or_404(payment_id)
+    data = request.get_json() or {}
+    
+    # In production, this would call Stripe/PayPal API
+    # For now, we simulate successful payment
+    success = data.get("success", True)
+    
+    if success:
+        payment.status = "completed"
+        payment.completed_at = now_ts()
+        payment.transaction_id = f"TXN_{uuid.uuid4().hex[:12].upper()}"
+        
+        # Update campaign payment status
+        campaign = PaidCampaign.query.get(payment.campaign_id)
+        if campaign:
+            campaign.payment_status = "paid"
+            campaign.status = "active"  # Activate campaign after payment
+            campaign.updated_at = now_ts()
+        
+        db.session.commit()
+        
+        return jsonify({
+            "success": True,
+            "payment": payment.to_dict(),
+            "message": "Payment completed successfully",
+            "campaign_activated": True
+        })
+    else:
+        payment.status = "failed"
+        db.session.commit()
+        
+        return jsonify({
+            "success": False,
+            "payment": payment.to_dict(),
+            "error": "Payment failed"
+        }), 400
+
+
+@app.route("/api/payments/<int:payment_id>/refund", methods=["POST"])
+def api_refund_payment(payment_id):
+    """Refund a payment"""
+    payment = Payment.query.get_or_404(payment_id)
+    data = request.get_json() or {}
+    user_email = data.get("user_email")
+
+    # Only the user who made the payment can refund it
+    if payment.user_email != user_email:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    # Can only refund completed payments
+    if payment.status != "completed":
+        return jsonify({"error": f"Cannot refund payment with status: {payment.status}"}), 400
+
+    payment.status = "refunded"
+    payment.refunded_at = now_ts()
+
+    # Update campaign payment status
+    campaign = PaidCampaign.query.get(payment.campaign_id)
+    if campaign:
+        campaign.payment_status = "refunded"
+        campaign.status = "pending"  # Pause campaign after refund
+        campaign.updated_at = now_ts()
+
+    db.session.commit()
+
+    return jsonify({
+        "success": True,
+        "payment": payment.to_dict(),
+        "message": "Refund processed successfully"
+    })
+
+
+@app.route("/api/payments/<int:payment_id>", methods=["GET"])
+def api_payment_detail(payment_id):
+    """Get payment details"""
+    payment = Payment.query.get_or_404(payment_id)
+    return jsonify(payment.to_dict())
+
+
+@app.route("/api/campaigns/<int:campaign_id>/payment-status", methods=["GET"])
+def api_campaign_payment_status(campaign_id):
+    """Check payment status for a campaign"""
+    campaign = PaidCampaign.query.get_or_404(campaign_id)
+    payment = Payment.query.filter_by(campaign_id=campaign_id).first()
+    
+    return jsonify({
+        "campaign_id": campaign_id,
+        "campaign_status": campaign.status,
+        "payment_status": campaign.payment_status,
+        "has_payment": payment is not None,
+        "payment": payment.to_dict() if payment else None
+    })
+
+
+# ---------- Payouts / Earnings ----------
+@app.route("/api/payouts", methods=["GET", "POST"])
+def api_payouts():
+    """Get all payouts or create a new payout request"""
+    if request.method == "GET":
+        creator_email = request.args.get("creator_email")
+        if creator_email:
+            payouts = Payout.query.filter_by(creator_email=creator_email).order_by(Payout.id.desc()).all()
+        else:
+            payouts = Payout.query.order_by(Payout.id.desc()).all()
+        return jsonify([p.to_dict() for p in payouts])
+
+    # POST: Create a payout request
+    data = request.get_json() or {}
+    creator_email = data.get("creator_email")
+    campaign_id = data.get("campaign_id")
+    amount = data.get("amount")
+    wallet_id = data.get("wallet_id")
+
+    if not all([creator_email, campaign_id, amount, wallet_id]):
+        return jsonify({"error": "Missing required fields: creator_email, campaign_id, amount, wallet_id"}), 400
+
+    # Verify creator owns the wallet
+    wallet = UserWallet.query.get_or_404(wallet_id)
+    if wallet.user_email != creator_email:
+        return jsonify({"error": "Wallet does not belong to this user"}), 403
+
+    if not wallet.verified:
+        return jsonify({"error": "Wallet must be verified before payout"}), 400
+
+    # Verify campaign exists
+    campaign = PaidCampaign.query.get_or_404(campaign_id)
+
+    payout = Payout(
+        creator_email=creator_email,
+        campaign_id=campaign_id,
+        wallet_id=wallet_id,
+        amount=amount,
+        payout_method="orange_money",
+        description=f"Earnings from campaign: {campaign.title}",
+        status="pending"
+    )
+
+    db.session.add(payout)
+    db.session.commit()
+
+    return jsonify({
+        "success": True,
+        "payout": payout.to_dict(),
+        "message": "Payout request created. Processing to Orange Money..."
+    }), 201
+
+
+@app.route("/api/payouts/<int:payout_id>/process", methods=["POST"])
+def api_process_payout(payout_id):
+    """Process a payout to Orange Money (simulated)"""
+    payout = Payout.query.get_or_404(payout_id)
+    wallet = UserWallet.query.get(payout.wallet_id)
+    
+    if not wallet or not wallet.verified:
+        return jsonify({"error": "Wallet not verified"}), 400
+    
+    data = request.get_json() or {}
+    success = data.get("success", True)
+    
+    if success:
+        payout.status = "processing"
+        payout.transaction_id = f"OM_{uuid.uuid4().hex[:10].upper()}"
+        
+        # Update wallet balance
+        wallet.balance += payout.amount
+        wallet.total_received += payout.amount
+        
+        db.session.commit()
+        
+        return jsonify({
+            "success": True,
+            "payout": payout.to_dict(),
+            "wallet": wallet.to_dict(),
+            "message": f"Payout of ${payout.amount} processing to Orange Money {wallet.account_number}"
+        })
+    else:
+        payout.status = "failed"
+        payout.failed_reason = data.get("reason", "Payment processing failed")
+        db.session.commit()
+        
+        return jsonify({
+            "success": False,
+            "payout": payout.to_dict(),
+            "error": payout.failed_reason
+        }), 400
+
+
+@app.route("/api/payouts/<int:payout_id>/complete", methods=["POST"])
+def api_complete_payout(payout_id):
+    """Mark payout as completed (Orange Money confirms delivery)"""
+    payout = Payout.query.get_or_404(payout_id)
+    
+    if payout.status != "processing":
+        return jsonify({"error": f"Cannot complete payout with status: {payout.status}"}), 400
+    
+    payout.status = "completed"
+    payout.sent_at = now_ts()
+    db.session.commit()
+    
+    return jsonify({
+        "success": True,
+        "payout": payout.to_dict(),
+        "message": "Payout completed successfully"
+    })
+
+
+@app.route("/api/payouts/<int:payout_id>", methods=["GET"])
+def api_payout_detail(payout_id):
+    """Get payout details"""
+    payout = Payout.query.get_or_404(payout_id)
+    wallet = UserWallet.query.get(payout.wallet_id)
+    
+    return jsonify({
+        "payout": payout.to_dict(),
+        "wallet": wallet.to_dict() if wallet else None
+    })
+
+
+@app.route("/api/campaigns/<int:campaign_id>/earnings", methods=["GET"])
+def api_campaign_earnings(campaign_id):
+    """Get earnings stats for a campaign"""
+    campaign = PaidCampaign.query.get_or_404(campaign_id)
+    
+    # Calculate potential earnings based on conversions
+    # Example: $10 per conversion (or can be configurable)
+    revenue_per_conversion = 10.0
+    gross_earnings = campaign.conversions * revenue_per_conversion
+    platform_fee = gross_earnings * 0.10  # 10% platform fee
+    net_earnings = gross_earnings - platform_fee
+    
+    return jsonify({
+        "campaign_id": campaign_id,
+        "campaign_title": campaign.title,
+        "conversions": campaign.conversions,
+        "gross_earnings": round(gross_earnings, 2),
+        "platform_fee": round(platform_fee, 2),
+        "net_earnings": round(net_earnings, 2),
+        "revenue_per_conversion": revenue_per_conversion,
+        "payout_available": net_earnings > 0,
     })
 
 

@@ -125,9 +125,19 @@ class Notification(db.Model):
     text       = db.Column(db.Text)
     timestamp  = db.Column(db.Text, default=lambda: now_ts())
     seen       = db.Column(db.Integer, default=0)
+    seen_at    = db.Column(db.Text, nullable=True)  # Track when notification was seen
+    auto_dismiss = db.Column(db.Integer, default=1)  # Auto-dismiss after being seen
 
     def to_dict(self):
-        return {"id": self.id, "text": self.text, "timestamp": self.timestamp, "seen": self.seen}
+        return {
+            "id": self.id,
+            "text": self.text,
+            "timestamp": self.timestamp,
+            "seen": self.seen,
+            "seen_at": self.seen_at,
+            "auto_dismiss": bool(self.auto_dismiss),
+            "ready_to_dismiss": bool(self.seen) and self.auto_dismiss == 1
+        }
 
 
 class Ad(db.Model):
@@ -144,6 +154,74 @@ class Ad(db.Model):
         return {
             "id": self.id, "title": self.title, "owner_email": self.owner_email,
             "budget": self.budget, "impressions": self.impressions, "clicks": self.clicks,
+        }
+
+
+class Comment(db.Model):
+    __tablename__ = "comments"
+    id           = db.Column(db.Integer, primary_key=True)
+    post_id      = db.Column(db.Integer, db.ForeignKey("posts.id"), nullable=False)
+    author_email = db.Column(db.Text, nullable=False)
+    author_name  = db.Column(db.Text)
+    profile_pic  = db.Column(db.Text, default="")
+    text         = db.Column(db.Text, nullable=False)
+    timestamp    = db.Column(db.Text, default=lambda: now_ts())
+    created_at   = db.Column(db.Text, default=lambda: now_ts())
+
+    def to_dict(self, author_verified=False):
+        return {
+            "id": self.id,
+            "post_id": self.post_id,
+            "author_email": self.author_email,
+            "author_name": self.author_name,
+            "profile_pic": self.profile_pic,
+            "text": self.text,
+            "timestamp": self.timestamp,
+            "author_verified": author_verified,
+        }
+
+
+class PaidCampaign(db.Model):
+    __tablename__ = "paid_campaigns"
+    id              = db.Column(db.Integer, primary_key=True)
+    owner_email     = db.Column(db.Text, nullable=False)
+    title           = db.Column(db.Text, nullable=False)
+    description     = db.Column(db.Text, default="")
+    budget          = db.Column(db.Float, default=0.0)
+    spent           = db.Column(db.Float, default=0.0)
+    status          = db.Column(db.Text, default="active")  # active, paused, completed
+    impressions     = db.Column(db.Integer, default=0)
+    clicks          = db.Column(db.Integer, default=0)
+    conversions     = db.Column(db.Integer, default=0)
+    target_audience = db.Column(db.Text, default="")  # e.g., "age:18-35, interests:tech"
+    cpc             = db.Column(db.Float, default=0.5)  # Cost Per Click
+    cpm             = db.Column(db.Float, default=2.0)  # Cost Per Mille (1000 impressions)
+    created_at      = db.Column(db.Text, default=lambda: now_ts())
+    updated_at      = db.Column(db.Text, default=lambda: now_ts())
+
+    def to_dict(self):
+        roi = 0.0
+        if self.spent > 0 and self.conversions > 0:
+            roi = ((self.conversions * 10) - self.spent) / self.spent * 100  # Assume $10 per conversion
+        
+        return {
+            "id": self.id,
+            "owner_email": self.owner_email,
+            "title": self.title,
+            "description": self.description,
+            "budget": self.budget,
+            "spent": round(self.spent, 2),
+            "status": self.status,
+            "impressions": self.impressions,
+            "clicks": self.clicks,
+            "conversions": self.conversions,
+            "ctr": round((self.clicks / self.impressions * 100), 2) if self.impressions > 0 else 0,  # Click-Through Rate
+            "cpc": self.cpc,
+            "cpm": self.cpm,
+            "target_audience": self.target_audience,
+            "roi": round(roi, 2),
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
         }
 
 
@@ -1822,6 +1900,7 @@ def api_post_modify(post_id):
 
     if request.method == "DELETE":
         UserReaction.query.filter_by(post_id=post_id).delete()
+        Comment.query.filter_by(post_id=post_id).delete()
         db.session.delete(post)
         db.session.commit()
         return jsonify({"success": True})
@@ -1830,6 +1909,88 @@ def api_post_modify(post_id):
     if not text:
         return jsonify({"error": "Text required"}), 400
     post.text = text
+    db.session.commit()
+    return jsonify({"success": True})
+
+
+# ---------- Comments ----------
+@app.route("/api/comments/<int:post_id>", methods=["GET", "POST"])
+def api_comments(post_id):
+    """Get all comments for a post or create a new comment"""
+    if request.method == "GET":
+        comments = Comment.query.filter_by(post_id=post_id).order_by(Comment.id.asc()).all()
+        
+        # Build verified lookup map
+        emails = list({c.author_email for c in comments})
+        verified_map = {}
+        if emails:
+            users = User.query.filter(User.email.in_(emails)).all()
+            verified_map = {u.email: bool(u.verified) for u in users}
+        
+        return jsonify([c.to_dict(author_verified=verified_map.get(c.author_email, False)) for c in comments])
+
+    # POST: Create new comment
+    post = Post.query.get_or_404(post_id)
+    data = request.get_json() or {}
+    
+    comment = Comment(
+        post_id=post_id,
+        author_email=data.get("author_email"),
+        author_name=data.get("author_name"),
+        profile_pic=data.get("profile_pic", ""),
+        text=data.get("text", "").strip(),
+    )
+    
+    if not comment.text:
+        return jsonify({"error": "Comment text required"}), 400
+    
+    db.session.add(comment)
+    
+    # Update post comment count
+    post.comments_count += 1
+    
+    # Notify post author of new comment (if not the commenter)
+    if post.author_email != data.get("author_email"):
+        notif = Notification(
+            user_email=post.author_email,
+            text=f"{data.get('author_name', 'Someone')} commented on your post"
+        )
+        db.session.add(notif)
+    
+    db.session.commit()
+    
+    author_verified = User.query.filter_by(email=data.get("author_email")).first()
+    author_verified = bool(author_verified.verified) if author_verified else False
+    
+    return jsonify({
+        "success": True,
+        "comment": comment.to_dict(author_verified=author_verified)
+    }), 201
+
+
+@app.route("/api/comments/<int:comment_id>", methods=["DELETE", "PATCH"])
+def api_comment_modify(comment_id):
+    """Delete or edit a comment"""
+    data = request.get_json() or {}
+    email = data.get("email")
+    comment = Comment.query.get_or_404(comment_id)
+    
+    if comment.author_email != email:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    if request.method == "DELETE":
+        post = Post.query.get(comment.post_id)
+        if post:
+            post.comments_count = max(0, post.comments_count - 1)
+        db.session.delete(comment)
+        db.session.commit()
+        return jsonify({"success": True})
+
+    # PATCH: Edit comment
+    text = data.get("text", "").strip()
+    if not text:
+        return jsonify({"error": "Comment text required"}), 400
+    comment.text = text
     db.session.commit()
     return jsonify({"success": True})
 
@@ -1876,6 +2037,27 @@ def api_react_post():
 def api_notifications_get(email):
     notifs = Notification.query.filter_by(user_email=email).order_by(Notification.id.desc()).all()
     return jsonify([n.to_dict() for n in notifs])
+
+
+@app.route("/api/notifications/<int:notif_id>/mark_seen", methods=["POST"])
+def api_notification_mark_seen(notif_id):
+    """Mark a notification as seen and track when it was seen"""
+    notif = Notification.query.get_or_404(notif_id)
+    notif.seen = 1
+    notif.seen_at = now_ts()
+    db.session.commit()
+    return jsonify({"success": True, "ready_to_dismiss": notif.to_dict()["ready_to_dismiss"]})
+
+
+@app.route("/api/notifications/<int:notif_id>/dismiss", methods=["DELETE"])
+def api_notification_dismiss(notif_id):
+    """Dismiss a notification (only if it's been seen and auto_dismiss is enabled)"""
+    notif = Notification.query.get_or_404(notif_id)
+    if notif.seen and notif.auto_dismiss:
+        db.session.delete(notif)
+        db.session.commit()
+        return jsonify({"success": True, "message": "Notification dismissed"})
+    return jsonify({"error": "Notification cannot be dismissed"}), 400
 
 
 # ---------- Monetization / Profile ----------
@@ -1966,6 +2148,158 @@ def api_ads():
 @app.route("/api/ads/impression", methods=["POST"])
 def api_ads_impression():
     return jsonify({"success": True})
+
+
+# ---------- Paid Campaigns ----------
+@app.route("/api/campaigns", methods=["GET", "POST"])
+def api_campaigns():
+    """Get all campaigns or create a new campaign"""
+    if request.method == "GET":
+        owner = request.args.get("owner")
+        if owner:
+            campaigns = PaidCampaign.query.filter_by(owner_email=owner).order_by(PaidCampaign.id.desc()).all()
+        else:
+            campaigns = PaidCampaign.query.order_by(PaidCampaign.id.desc()).all()
+        return jsonify([c.to_dict() for c in campaigns])
+
+    # POST: Create new campaign
+    data = request.get_json() or {}
+    
+    campaign = PaidCampaign(
+        owner_email=data.get("owner_email"),
+        title=data.get("title", ""),
+        description=data.get("description", ""),
+        budget=data.get("budget", 0.0),
+        target_audience=data.get("target_audience", ""),
+        cpc=data.get("cpc", 0.5),
+        cpm=data.get("cpm", 2.0),
+    )
+    
+    if not campaign.title:
+        return jsonify({"error": "Campaign title required"}), 400
+    
+    db.session.add(campaign)
+    db.session.commit()
+    
+    return jsonify({
+        "success": True,
+        "campaign": campaign.to_dict()
+    }), 201
+
+
+@app.route("/api/campaigns/<int:campaign_id>", methods=["GET", "PATCH", "DELETE"])
+def api_campaign_detail(campaign_id):
+    """Get, update, or delete a specific campaign"""
+    campaign = PaidCampaign.query.get_or_404(campaign_id)
+    
+    if request.method == "GET":
+        return jsonify(campaign.to_dict())
+
+    data = request.get_json() or {}
+    email = data.get("email")
+    
+    # Only owner can modify
+    if campaign.owner_email != email:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    if request.method == "DELETE":
+        db.session.delete(campaign)
+        db.session.commit()
+        return jsonify({"success": True, "message": "Campaign deleted"})
+
+    # PATCH: Update campaign
+    campaign.title = data.get("title", campaign.title)
+    campaign.description = data.get("description", campaign.description)
+    campaign.budget = data.get("budget", campaign.budget)
+    campaign.status = data.get("status", campaign.status)
+    campaign.target_audience = data.get("target_audience", campaign.target_audience)
+    campaign.cpc = data.get("cpc", campaign.cpc)
+    campaign.cpm = data.get("cpm", campaign.cpm)
+    campaign.updated_at = now_ts()
+    
+    db.session.commit()
+    
+    return jsonify({
+        "success": True,
+        "campaign": campaign.to_dict()
+    })
+
+
+@app.route("/api/campaigns/<int:campaign_id>/impression", methods=["POST"])
+def api_campaign_impression(campaign_id):
+    """Record an impression and update spent amount"""
+    campaign = PaidCampaign.query.get_or_404(campaign_id)
+    
+    data = request.get_json() or {}
+    count = data.get("count", 1)
+    
+    campaign.impressions += count
+    cost = (count * campaign.cpm) / 1000
+    campaign.spent += cost
+    
+    db.session.commit()
+    
+    return jsonify({
+        "success": True,
+        "campaign": campaign.to_dict()
+    })
+
+
+@app.route("/api/campaigns/<int:campaign_id>/click", methods=["POST"])
+def api_campaign_click(campaign_id):
+    """Record a click and update spent amount"""
+    campaign = PaidCampaign.query.get_or_404(campaign_id)
+    
+    campaign.clicks += 1
+    campaign.spent += campaign.cpc
+    
+    db.session.commit()
+    
+    return jsonify({
+        "success": True,
+        "campaign": campaign.to_dict()
+    })
+
+
+@app.route("/api/campaigns/<int:campaign_id>/conversion", methods=["POST"])
+def api_campaign_conversion(campaign_id):
+    """Record a conversion"""
+    campaign = PaidCampaign.query.get_or_404(campaign_id)
+    
+    campaign.conversions += 1
+    
+    db.session.commit()
+    
+    return jsonify({
+        "success": True,
+        "campaign": campaign.to_dict()
+    })
+
+
+@app.route("/api/campaigns/<int:campaign_id>/analytics", methods=["GET"])
+def api_campaign_analytics(campaign_id):
+    """Get detailed analytics for a campaign"""
+    campaign = PaidCampaign.query.get_or_404(campaign_id)
+    
+    ctr = (campaign.clicks / campaign.impressions * 100) if campaign.impressions > 0 else 0
+    cost_per_conversion = campaign.spent / campaign.conversions if campaign.conversions > 0 else 0
+    
+    return jsonify({
+        "campaign_id": campaign_id,
+        "title": campaign.title,
+        "status": campaign.status,
+        "budget": campaign.budget,
+        "spent": round(campaign.spent, 2),
+        "remaining": round(campaign.budget - campaign.spent, 2),
+        "impressions": campaign.impressions,
+        "clicks": campaign.clicks,
+        "conversions": campaign.conversions,
+        "ctr": round(ctr, 2),
+        "cpc": campaign.cpc,
+        "cpm": campaign.cpm,
+        "cost_per_conversion": round(cost_per_conversion, 2),
+        "roi": campaign.to_dict()["roi"],
+    })
 
 
 

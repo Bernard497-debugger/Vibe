@@ -358,38 +358,6 @@ class UserEarnings(db.Model):
         }
 
 
-class Payout(db.Model):
-    __tablename__ = "payouts"
-    id              = db.Column(db.Integer, primary_key=True)
-    creator_email   = db.Column(db.Text, db.ForeignKey("users.email"), nullable=False)  # Person receiving money
-    campaign_id     = db.Column(db.Integer, db.ForeignKey("paid_campaigns.id"), nullable=False)  # Campaign that generated earnings
-    wallet_id       = db.Column(db.Integer, db.ForeignKey("user_wallets.id"), nullable=False)  # Where to send money
-    amount          = db.Column(db.Float, nullable=False)  # Earnings amount
-    status          = db.Column(db.Text, default="pending")  # pending, processing, completed, failed
-    payout_method   = db.Column(db.Text, default="orange_money")  # orange_money, bank_transfer, etc.
-    transaction_id  = db.Column(db.Text, unique=True, nullable=True)  # Orange Money transaction ID
-    description     = db.Column(db.Text, default="")
-    created_at      = db.Column(db.Text, default=lambda: now_ts())
-    sent_at         = db.Column(db.Text, nullable=True)
-    failed_reason   = db.Column(db.Text, nullable=True)
-    
-    def to_dict(self):
-        return {
-            "id": self.id,
-            "creator_email": self.creator_email,
-            "campaign_id": self.campaign_id,
-            "wallet_id": self.wallet_id,
-            "amount": round(self.amount, 2),
-            "status": self.status,
-            "payout_method": self.payout_method,
-            "transaction_id": self.transaction_id,
-            "description": self.description,
-            "created_at": self.created_at,
-            "sent_at": self.sent_at,
-            "failed_reason": self.failed_reason,
-        }
-
-
 # ---------- Create tables ----------
 with app.app_context():
     db.create_all()

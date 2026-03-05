@@ -1691,17 +1691,26 @@ async function uploadFile(file, folder='vibenet/posts'){
     return cld.secure_url;
   } catch(e) {
     if(isPost) showUploadProgress(false);
-    console.error('Upload failed, using server fallback:', e.message);
-    const fd = new FormData(); fd.append('file', file);
-    const res = await fetch(API + '/upload', {method:'POST', body: fd});
-    const j = await res.json();
-    return j.url || '';
+    console.error('Cloudinary upload failed:', e.message);
+    alert('Upload failed: ' + e.message + '\n\nCheck your Cloudinary settings.');
+    return '';
   }
 }
 
 function optimizeCldUrl(url, isVideo){
-  if(!url || !url.includes('cloudinary.com')) return url;
+  if(!url) return url;
+  // Only transform cloudinary URLs, and only if they have the standard upload path
+  if(!url.includes('cloudinary.com') || !url.includes('/upload/')) return url;
+  // Don't double-transform
+  if(url.includes('/upload/q_auto')) return url;
   return url.replace('/upload/', '/upload/q_auto,f_auto/');
+}
+
+function isVideoUrl(url){
+  if(!url) return false;
+  return url.includes('/video/upload/') ||
+         url.includes('resource_type=video') ||
+         /\.(mp4|webm|mov|avi|mkv|ogv)(\?|$|#)/i.test(url);
 }
 
 async function createAd(){
@@ -1813,8 +1822,7 @@ function createPostElement(p){
 
   if(p.file_url){
     const media = document.createElement('div'); media.className='post-media';
-    const isVideo = p.file_url.includes('/video/upload/') || 
-                    p.file_url.match(/\.(mp4|webm|mov|avi|mkv)(\?|$)/i);
+    const isVideo = isVideoUrl(p.file_url);
     if(isVideo){
       const wrap = document.createElement('div'); wrap.className='video-wrap';
       const v = document.createElement('video');

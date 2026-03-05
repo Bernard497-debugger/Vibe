@@ -226,6 +226,11 @@ with app.app_context():
             pass  # Column already exists — that's fine
 
 # ---------- Health check ----------
+@app.route("/api/debug/posts")
+def api_debug_posts():
+    posts = Post.query.order_by(Post.id.desc()).limit(5).all()
+    return jsonify([{"id": p.id, "text": p.text, "file_url": p.file_url, "ts": p.timestamp} for p in posts])
+
 @app.route("/health")
 def health():
     return "OK", 200
@@ -1669,28 +1674,16 @@ async function uploadFile(file, folder='vibenet/posts'){
   const isPost = folder === 'vibenet/posts';
   if(isPost) showUploadProgress(true, `Uploading ${file.type.startsWith('video/') ? 'video' : 'image'} (${(file.size/1024/1024).toFixed(1)}MB)...`);
   try {
-    // Get cloud name from server
-    const sigRes = await fetch(API + '/sign-upload', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ folder })
-    });
-    if(!sigRes.ok) throw new Error('Server error ' + sigRes.status);
-    const sig = await sigRes.json();
-    if(sig.error) throw new Error(sig.error);
-
     const fd = new FormData();
-    fd.append('file',         file);
-    fd.append('upload_preset','vibenet');   // unsigned preset
-    fd.append('folder',       folder);
-
-    const endpoint = `https://api.cloudinary.com/v1_1/${sig.cloud_name}/auto/upload`;
-    const cldRes  = await fetch(endpoint, {method:'POST', body: fd});
-    const cld     = await cldRes.json();
-    console.log('Cloudinary response:', cld);
-    if(cld.error) throw new Error(cld.error.message);
-    if(!cld.secure_url) throw new Error('No URL returned');
+    fd.append('file', file);
+    fd.append('folder', folder);
+    const res = await fetch(API + '/upload', {method:'POST', body: fd});
+    const j = await res.json();
+    console.log('Upload response:', j);
+    if(j.error) throw new Error(j.error);
+    if(!j.url) throw new Error('No URL returned');
     if(isPost) showUploadProgress(false);
-    return cld.secure_url;
+    return j.url;
   } catch(e){
     if(isPost) showUploadProgress(false);
     console.error('Upload error:', e.message);
@@ -1698,6 +1691,7 @@ async function uploadFile(file, folder='vibenet/posts'){
     return '';
   }
 }
+
 
 function optimizeCldUrl(url, isVideo){
   if(!url) return url;
@@ -2197,12 +2191,20 @@ def api_me():
 # ---------- Upload ----------
 @app.route("/api/upload", methods=["POST"])
 def api_upload():
-    """Fallback server-side upload — used only when Cloudinary is not configured."""
     if "file" not in request.files:
         return jsonify({"error": "No file"}), 400
     f = request.files["file"]
     if not f.filename:
         return jsonify({"error": "No filename"}), 400
+    folder = request.form.get("folder", "vibenet/posts")
+    if _cloudinary_available and _cloudinary_ok():
+        try:
+            import cloudinary.uploader
+            result = cloudinary.uploader.upload(f, folder=folder, resource_type="auto")
+            return jsonify({"url": result["secure_url"]})
+        except Exception as e:
+            return jsonify({"error": f"Cloudinary: {str(e)}"}), 500
+    # Local fallback (dev only)
     fn = f"{uuid.uuid4().hex}_{f.filename}"
     f.save(os.path.join(UPLOAD_DIR, fn))
     return jsonify({"url": f"/uploads/{fn}"})

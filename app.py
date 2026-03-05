@@ -1674,16 +1674,27 @@ async function uploadFile(file, folder='vibenet/posts'){
   const isPost = folder === 'vibenet/posts';
   if(isPost) showUploadProgress(true, `Uploading ${file.type.startsWith('video/') ? 'video' : 'image'} (${(file.size/1024/1024).toFixed(1)}MB)...`);
   try {
+    const sigRes = await fetch(API + '/sign-upload', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ folder })
+    });
+    if(!sigRes.ok) throw new Error('Server error ' + sigRes.status);
+    const sig = await sigRes.json();
+    if(sig.error) throw new Error(sig.error);
     const fd = new FormData();
-    fd.append('file', file);
-    fd.append('folder', folder);
-    const res = await fetch(API + '/upload', {method:'POST', body: fd});
-    const j = await res.json();
-    console.log('Upload response:', j);
-    if(j.error) throw new Error(j.error);
-    if(!j.url) throw new Error('No URL returned');
+    fd.append('file',      file);
+    fd.append('api_key',   sig.api_key);
+    fd.append('timestamp', String(sig.timestamp));
+    fd.append('signature', sig.signature);
+    fd.append('folder',    sig.folder);
+    const endpoint = `https://api.cloudinary.com/v1_1/${sig.cloud_name}/auto/upload`;
+    const cldRes = await fetch(endpoint, {method:'POST', body:fd});
+    const cld = await cldRes.json();
+    console.log('Cloudinary response:', cld);
+    if(cld.error) throw new Error(cld.error.message);
+    if(!cld.secure_url) throw new Error('No URL returned');
     if(isPost) showUploadProgress(false);
-    return j.url;
+    return cld.secure_url;
   } catch(e){
     if(isPost) showUploadProgress(false);
     console.error('Upload error:', e.message);
@@ -2214,7 +2225,20 @@ def api_upload():
 def api_sign_upload():
     if not _cloudinary_ok():
         return jsonify({"error": "Cloudinary not configured"}), 503
-    return jsonify({"cloud_name": cloudinary.config().cloud_name})
+    import time, hashlib
+    data      = request.get_json() or {}
+    folder    = data.get("folder", "vibenet/posts")
+    timestamp = int(time.time())
+    params    = {"folder": folder, "timestamp": timestamp}
+    param_str = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+    signature = hashlib.sha1((param_str + cloudinary.config().api_secret).encode()).hexdigest()
+    return jsonify({
+        "signature":  signature,
+        "timestamp":  timestamp,
+        "api_key":    cloudinary.config().api_key,
+        "cloud_name": cloudinary.config().cloud_name,
+        "folder":     folder,
+    })
 
 
 @app.route("/api/test-cloudinary")

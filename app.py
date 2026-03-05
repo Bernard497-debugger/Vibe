@@ -1669,30 +1669,32 @@ async function uploadFile(file, folder='vibenet/posts'){
   const isPost = folder === 'vibenet/posts';
   if(isPost) showUploadProgress(true, `Uploading ${file.type.startsWith('video/') ? 'video' : 'image'} (${(file.size/1024/1024).toFixed(1)}MB)...`);
   try {
+    // Get cloud name from server
     const sigRes = await fetch(API + '/sign-upload', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ folder })
     });
-    if(!sigRes.ok){ throw new Error('Sign-upload HTTP ' + sigRes.status); }
+    if(!sigRes.ok) throw new Error('Server error ' + sigRes.status);
     const sig = await sigRes.json();
-    if(sig.error){ throw new Error('Sign error: ' + sig.error); }
+    if(sig.error) throw new Error(sig.error);
+
     const fd = new FormData();
-    fd.append('file',      file);
-    fd.append('api_key',   sig.api_key);
-    fd.append('timestamp', String(sig.timestamp));
-    fd.append('signature', sig.signature);
-    fd.append('folder',    sig.folder);
+    fd.append('file',         file);
+    fd.append('upload_preset','vibenet');   // unsigned preset
+    fd.append('folder',       folder);
+
     const endpoint = `https://api.cloudinary.com/v1_1/${sig.cloud_name}/auto/upload`;
-    const cldRes = await fetch(endpoint, {method:'POST', body:fd});
-    const cld = await cldRes.json();
-    if(cld.error){ throw new Error('Cloudinary: ' + cld.error.message); }
-    if(!cld.secure_url){ throw new Error('No secure_url in response'); }
+    const cldRes  = await fetch(endpoint, {method:'POST', body: fd});
+    const cld     = await cldRes.json();
+    console.log('Cloudinary response:', cld);
+    if(cld.error) throw new Error(cld.error.message);
+    if(!cld.secure_url) throw new Error('No URL returned');
     if(isPost) showUploadProgress(false);
     return cld.secure_url;
-  } catch(e) {
+  } catch(e){
     if(isPost) showUploadProgress(false);
-    console.error('Cloudinary upload failed:', e.message);
-    alert('Upload failed: ' + e.message + '\n\nCheck your Cloudinary settings.');
+    console.error('Upload error:', e.message);
+    alert('Upload failed: ' + e.message);
     return '';
   }
 }
@@ -2208,25 +2210,9 @@ def api_upload():
 
 @app.route("/api/sign-upload", methods=["POST"])
 def api_sign_upload():
-    """Signs a Cloudinary upload so the browser can upload directly."""
     if not _cloudinary_ok():
-        return jsonify({"error": "Cloudinary not configured — set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET"}), 503
-    import time, hashlib
-    data      = request.get_json() or {}
-    folder    = data.get("folder", "vibenet/posts")
-    timestamp = int(time.time())
-    # Params MUST be sorted alphabetically — Cloudinary is strict about this
-    params    = {"folder": folder, "timestamp": timestamp}
-    param_str = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
-    to_sign   = param_str + cloudinary.config().api_secret
-    signature = hashlib.sha1(to_sign.encode("utf-8")).hexdigest()
-    return jsonify({
-        "signature":  signature,
-        "timestamp":  timestamp,
-        "api_key":    cloudinary.config().api_key,
-        "cloud_name": cloudinary.config().cloud_name,
-        "folder":     folder,
-    })
+        return jsonify({"error": "Cloudinary not configured"}), 503
+    return jsonify({"cloud_name": cloudinary.config().cloud_name})
 
 
 @app.route("/api/test-cloudinary")

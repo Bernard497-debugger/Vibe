@@ -1749,11 +1749,16 @@ async function addPost(){
   const text = byId('postText').value.trim();
   const fileEl = byId('fileUpload');
   let url = '';
-  if(fileEl.files[0]) url = await uploadFile(fileEl.files[0]);
+  if(fileEl.files[0]){
+    url = await uploadFile(fileEl.files[0]);
+    console.log('Upload result URL:', url);
+  }
   if(!text && !url) return;
-  await fetch(API + '/posts', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
+  const res = await fetch(API + '/posts', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
     author_email: currentUser.email, author_name: currentUser.name, profile_pic: currentUser.profile_pic||'', text, file_url: url
   })});
+  const j = await res.json();
+  console.log('Post created:', j);
   byId('postText').value=''; fileEl.value=''; byId('fileNameDisplay').textContent='';
   await loadFeed(); await loadProfilePosts(); await loadMonetization();
 }
@@ -1808,7 +1813,8 @@ function createPostElement(p){
 
   if(p.file_url){
     const media = document.createElement('div'); media.className='post-media';
-    const isVideo = p.file_url.endsWith('.mp4')||p.file_url.endsWith('.webm')||p.file_url.includes('/video/');
+    const isVideo = p.file_url.includes('/video/upload/') || 
+                    p.file_url.match(/\.(mp4|webm|mov|avi|mkv)(\?|$)/i);
     if(isVideo){
       const wrap = document.createElement('div'); wrap.className='video-wrap';
       const v = document.createElement('video');

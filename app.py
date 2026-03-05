@@ -44,8 +44,9 @@ app.config["SQLALCHEMY_DATABASE_URI"] = (
 )
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
-    "pool_recycle": 280,   # keep Render/Postgres connections alive
+    "pool_recycle": 280,
     "pool_pre_ping": True,
+    "connect_args": {"connect_timeout": 10} if not os.environ.get("DATABASE_URL", "").startswith("sqlite") else {},
 }
 
 os.makedirs(os.path.join(APP_DIR, "data"), exist_ok=True)
@@ -182,7 +183,17 @@ class PayoutRequest(db.Model):
 
 # ---------- Create tables ----------
 with app.app_context():
-    db.create_all()
+    try:
+        db.create_all()
+        print("✅ Database tables created/verified OK", flush=True)
+    except Exception as e:
+        print(f"⚠️  DB init warning (non-fatal): {e}", flush=True)
+
+# ---------- Health check ----------
+@app.route("/health")
+def health():
+    return "OK", 200
+
 
 # ---------- Static uploads ----------
 @app.route("/uploads/<path:filename>")
@@ -1318,10 +1329,13 @@ body::after {
         </div>
 
         <!-- Payout Request -->
-        <div style="background:var(--card);border:1px solid var(--border);border-radius:16px;padding:22px;margin-bottom:20px">
+        <div id="payoutSection" style="background:var(--card);border:1px solid var(--border);border-radius:16px;padding:22px;margin-bottom:20px">
           <div class="monet-section-title" style="margin-bottom:6px">💸 Request Payout</div>
           <div style="font-size:13px;color:var(--muted2);margin-bottom:16px;line-height:1.6">
             Enter your Orange Money number and the amount to withdraw. Payouts are sent manually within 24–48 hours.
+            <div style="margin-top:8px;padding:10px 14px;background:rgba(77,240,192,0.06);border:1px solid rgba(77,240,192,0.15);border-radius:10px;color:var(--muted2)">
+              📋 <strong style="color:var(--text)">Eligibility required:</strong> 1,000 followers + 4,000 watch hours. Check your status in the cards above.
+            </div>
           </div>
           <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
             <div style="flex:1;min-width:160px">
@@ -1486,31 +1500,30 @@ async function uploadFile(file, folder='vibenet/posts'){
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ folder })
     });
-    if(sigRes.ok){
-      const sig = await sigRes.json();
-      if(sig.error) throw new Error(sig.error);
-      if(sig.cloud_name && sig.api_key){
-        const fd = new FormData();
-        fd.append('file',      file);
-        fd.append('api_key',   sig.api_key);
-        fd.append('timestamp', sig.timestamp);
-        fd.append('signature', sig.signature);
-        fd.append('folder',    sig.folder);
-        const endpoint = `https://api.cloudinary.com/v1_1/${sig.cloud_name}/auto/upload`;
-        const cldRes = await fetch(endpoint, {method:'POST', body:fd});
-        const cld = await cldRes.json();
-        if(cld.error){ throw new Error(cld.error.message); }
-        return cld.secure_url || '';
-      }
-    }
+    if(!sigRes.ok){ throw new Error('Sign-upload HTTP ' + sigRes.status); }
+    const sig = await sigRes.json();
+    if(sig.error){ throw new Error('Sign error: ' + sig.error); }
+    const fd = new FormData();
+    fd.append('file',      file);
+    fd.append('api_key',   sig.api_key);
+    fd.append('timestamp', String(sig.timestamp));
+    fd.append('signature', sig.signature);
+    fd.append('folder',    sig.folder);
+    const endpoint = `https://api.cloudinary.com/v1_1/${sig.cloud_name}/auto/upload`;
+    const cldRes = await fetch(endpoint, {method:'POST', body:fd});
+    const cld = await cldRes.json();
+    console.log('Cloudinary response:', cld);
+    if(cld.error){ throw new Error('Cloudinary: ' + cld.error.message); }
+    if(!cld.secure_url){ throw new Error('No secure_url in response'); }
+    return cld.secure_url;
   } catch(e) {
-    console.error('Cloudinary upload failed:', e);
+    console.error('Upload failed, using server fallback:', e.message);
+    // Fallback: server upload
+    const fd = new FormData(); fd.append('file', file);
+    const res = await fetch(API + '/upload', {method:'POST', body: fd});
+    const j = await res.json();
+    return j.url || '';
   }
-  // Fallback: local server upload
-  const fd = new FormData(); fd.append('file', file);
-  const res = await fetch(API + '/upload', {method:'POST', body: fd});
-  const j = await res.json();
-  return j.url || '';
 }
 
 function optimizeCldUrl(url, isVideo){
@@ -1778,12 +1791,44 @@ async function updateBio(){
 
 async function loadMonetization(){
   if(!currentUser) return;
-  const r=await fetch(API+'/monetization/'+encodeURIComponent(currentUser.email));
-  const j=await r.json();
-  byId('monFollowers').textContent=j.followers;
-  byId('monWatch').textContent=j.watch_hours;
-  byId('monEarnings').textContent=(j.earnings||0).toFixed(2);
-  byId('monStatus').textContent=j.followers>=1000&&j.watch_hours>=4000?'✅ Eligible':'⏳ Growing';
+  const r = await fetch(API+'/monetization/'+encodeURIComponent(currentUser.email));
+  const j = await r.json();
+  const followers  = j.followers   || 0;
+  const watchHours = j.watch_hours || 0;
+  const earnings   = j.earnings    || 0;
+  const eligible   = j.eligible;
+
+  byId('monFollowers').textContent = followers;
+  byId('monWatch').textContent     = watchHours;
+  byId('monEarnings').textContent  = earnings.toFixed(2);
+
+  const statusEl = byId('monStatus');
+  if(eligible){
+    statusEl.innerHTML = '✅ Eligible';
+    statusEl.style.color = 'var(--accent)';
+  } else {
+    // Show what's still needed
+    const needFollowers  = Math.max(0, 1000 - followers);
+    const needWatchHours = Math.max(0, 4000 - watchHours);
+    let msg = '⏳ Growing';
+    const parts = [];
+    if(needFollowers > 0)  parts.push(`${needFollowers} more followers`);
+    if(needWatchHours > 0) parts.push(`${needWatchHours} more watch hours`);
+    if(parts.length) msg += ` — need ${parts.join(' & ')}`;
+    statusEl.innerHTML = msg;
+    statusEl.style.color = 'var(--muted2)';
+    statusEl.style.fontSize = '13px';
+  }
+
+  // Show/hide payout section based on eligibility
+  const payoutSection = byId('payoutSection');
+  if(payoutSection){
+    if(eligible){
+      payoutSection.style.display = 'block';
+    } else {
+      payoutSection.style.display = 'none';
+    }
+  }
 }
 
 async function createAd(){
@@ -1924,18 +1969,34 @@ def api_upload():
 def api_sign_upload():
     """Signs a Cloudinary upload so the browser can upload directly."""
     if not _cloudinary_ok():
-        return jsonify({"error": "Cloudinary not configured"}), 503
+        return jsonify({"error": "Cloudinary not configured — set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET"}), 503
     import time, hashlib
     data      = request.get_json() or {}
     folder    = data.get("folder", "vibenet/posts")
     timestamp = int(time.time())
-    param_str = f"folder={folder}&timestamp={timestamp}"
-    signature = hashlib.sha1((param_str + cloudinary.config().api_secret).encode()).hexdigest()
+    # Params MUST be sorted alphabetically — Cloudinary is strict about this
+    params    = {"folder": folder, "timestamp": timestamp}
+    param_str = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+    to_sign   = param_str + cloudinary.config().api_secret
+    signature = hashlib.sha1(to_sign.encode("utf-8")).hexdigest()
     return jsonify({
-        "signature": signature, "timestamp": timestamp,
-        "api_key": cloudinary.config().api_key,
+        "signature":  signature,
+        "timestamp":  timestamp,
+        "api_key":    cloudinary.config().api_key,
         "cloud_name": cloudinary.config().cloud_name,
-        "folder": folder,
+        "folder":     folder,
+    })
+
+
+@app.route("/api/test-cloudinary")
+def api_test_cloudinary():
+    """Quick diagnostic — visit this URL to check Cloudinary config."""
+    cfg = cloudinary.config()
+    return jsonify({
+        "cloudinary_ok":  _cloudinary_ok(),
+        "cloud_name_set": bool(cfg.cloud_name),
+        "api_key_set":    bool(cfg.api_key),
+        "api_secret_set": bool(cfg.api_secret),
     })
 
 
@@ -2045,8 +2106,14 @@ def api_monetization_get(email):
     followers = Follower.query.filter_by(user_email=email).count()
     user      = User.query.filter_by(email=email).first()
     if user:
-        return jsonify({"followers": followers, "watch_hours": user.watch_hours, "earnings": user.earnings})
-    return jsonify({"followers": 0, "watch_hours": 0, "earnings": 0})
+        eligible = followers >= 1000 and user.watch_hours >= 4000
+        return jsonify({
+            "followers":   followers,
+            "watch_hours": user.watch_hours,
+            "earnings":    user.earnings,
+            "eligible":    eligible,
+        })
+    return jsonify({"followers": 0, "watch_hours": 0, "earnings": 0, "eligible": False})
 
 
 @app.route("/api/profile/<email>")
@@ -2126,7 +2193,27 @@ def api_ads():
 
 @app.route("/api/ads/impression", methods=["POST"])
 def api_ads_impression():
+    data    = request.get_json() or {}
+    post_id = data.get("post_id")
+    post    = Post.query.get(post_id)
+    if post:
+        author = User.query.filter_by(email=post.author_email).first()
+        if author:
+            author.earnings += 0.05   # P0.05 per ad impression
+            db.session.commit()
     return jsonify({"success": True})
+
+
+@app.route("/api/admin/wipe-posts", methods=["POST"])
+def api_wipe_posts():
+    """Delete every post and reaction. One-time cleanup."""
+    data = request.get_json() or {}
+    if data.get("confirm") != "WIPE":
+        return jsonify({"error": "Send confirm=WIPE to proceed"}), 400
+    UserReaction.query.delete()
+    Post.query.delete()
+    db.session.commit()
+    return jsonify({"success": True, "message": "All posts and reactions deleted."})
 
 
 # ---------- Payout Requests ----------
@@ -2141,6 +2228,10 @@ def api_payout_request():
     user = User.query.filter_by(email=email).first()
     if not user:
         return jsonify({"error": "User not found"}), 404
+    # Must be eligible: 1K followers + 4K watch hours
+    followers = Follower.query.filter_by(user_email=email).count()
+    if followers < 1000 or user.watch_hours < 4000:
+        return jsonify({"error": f"You need 1,000 followers and 4,000 watch hours to request a payout. You have {followers} followers and {user.watch_hours} watch hours."}), 403
     if user.earnings < amount:
         return jsonify({"error": f"Insufficient balance. Your earnings are P{user.earnings:.2f}"}), 400
     user.earnings -= amount

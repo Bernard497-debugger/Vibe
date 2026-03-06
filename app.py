@@ -1374,6 +1374,10 @@ body::after {
               <div class="form-label" style="margin-bottom:6px">Budget (BWP)</div>
               <input id="adBudget" class="form-input" type="number" min="1" placeholder="50" style="width:100%" />
             </div>
+            <div style="flex:1;min-width:160px">
+              <div class="form-label" style="margin-bottom:6px">WhatsApp Number</div>
+              <input id="adWhatsapp" class="form-input" placeholder="e.g. 26772927417" style="width:100%" />
+            </div>
             <button class="btn-primary" onclick="createAd()">Submit →</button>
           </div>
           <div id="adMsg" style="margin-top:12px;font-size:13px;line-height:1.6;display:none"></div>
@@ -1928,10 +1932,18 @@ async function loadMonetization(){
 }
 
 async function createAd(){
-  const title=byId('adTitle').value.trim(); const budget=parseFloat(byId('adBudget').value||0);
-  if(!title||!budget){ alert('Please enter a title and budget.'); return; }
-  await fetch(API+'/ads',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title,budget,owner:currentUser.email})});
-  byId('adTitle').value=''; byId('adBudget').value='';
+  const title    = byId('adTitle').value.trim();
+  const budget   = parseFloat(byId('adBudget').value||0);
+  const whatsapp = byId('adWhatsapp').value.trim();
+  const msg      = byId('adMsg');
+  if(!title || !budget){ alert('Please enter a title and budget.'); return; }
+  if(!whatsapp){ alert('Please enter your WhatsApp number.'); return; }
+  await fetch(API+'/ads',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title, budget, whatsapp_number: whatsapp, owner: currentUser.email})});
+  byId('adTitle').value=''; byId('adBudget').value=''; byId('adWhatsapp').value='';
+  msg.style.display = 'block';
+  msg.style.color = 'var(--accent)';
+  msg.textContent = '✅ Campaign submitted! Please send P' + budget.toFixed(2) + ' via Orange Money to 72927417. Your campaign goes live once we confirm your payment.';
+  setTimeout(()=>{ msg.style.display='none'; }, 10000);
   loadAds();
 }
 

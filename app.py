@@ -1513,6 +1513,11 @@ body::after {
           <input id="signupPassword" type="password" placeholder="••••••••" />
         </div>
         <div class="field">
+          <div class="field-label">Date of Birth</div>
+          <input id="signupDob" type="date" style="color-scheme:dark" />
+          <div style="font-size:11px;color:#5a6a85;margin-top:4px">You must be at least 13 years old to join VibeNet.</div>
+        </div>
+        <div class="field">
           <div class="field-label">Profile photo (optional)</div>
           <input id="signupPic" type="file" accept="image/*" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--muted2);width:100%;font-size:13px;" />
         </div>
@@ -1784,7 +1789,20 @@ async function signup(){
   const name = byId('signupName').value.trim();
   const email = byId('signupEmail').value.trim().toLowerCase();
   const password = byId('signupPassword').value;
+  const dob = byId('signupDob').value;
   if(!name||!email||!password){ alert('Please fill all required fields.'); return; }
+  if(!dob){ alert('Please enter your date of birth.'); return; }
+
+  // Age check — must be 13+
+  const birthDate = new Date(dob);
+  const today = new Date();
+  let age = today.getFullYear() - birthDate.getFullYear();
+  const m = today.getMonth() - birthDate.getMonth();
+  if(m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) age--;
+  if(age < 13){
+    alert('❌ You must be at least 13 years old to create a VibeNet account.');
+    return;
+  }
 
   let profilePicUrl = '';
   const pic = byId('signupPic').files[0];

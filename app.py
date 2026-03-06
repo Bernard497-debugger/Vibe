@@ -1581,9 +1581,14 @@ async async function login(){
   const email = byId('loginEmail').value.trim().toLowerCase();
   const password = byId('loginPassword').value;
   if(!email||!password){ alert('Please fill in your login details.'); return; }
-  const res = await fetch(API + '/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email, password})});
-  const j = await res.json();
-  if(j.user){ currentUser = j.user; onLogin(); } else alert(j.error || 'Invalid credentials');
+  try {
+    const res = await fetch(API + '/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email, password})});
+    const j = await res.json();
+    if(j.user){ currentUser = j.user; onLogin(); }
+    else alert(j.error || 'Invalid credentials');
+  } catch(e){
+    alert('Login failed: ' + e.message);
+  }
 }
 
 async function logout(){
@@ -2157,18 +2162,27 @@ def api_signup():
 
 @app.route("/api/login", methods=["POST"])
 def api_login():
-    data     = request.get_json() or {}
-    email    = data.get("email", "").strip().lower()
-    password = data.get("password", "")
-    user     = User.query.filter_by(email=email, password=password).first()
-    if not user:
-        return jsonify({"error": "Invalid credentials"}), 401
-    if user.banned:
-        return jsonify({"error": "Your account has been suspended. Contact support."}), 403
-    user.last_active = now_ts()
-    db.session.commit()
-    session["user_email"] = email
-    return jsonify({"user": user.to_dict()})
+    try:
+        data     = request.get_json() or {}
+        email    = data.get("email", "").strip().lower()
+        password = data.get("password", "")
+        if not email or not password:
+            return jsonify({"error": "Missing email or password"}), 400
+        user = User.query.filter_by(email=email, password=password).first()
+        if not user:
+            return jsonify({"error": "Invalid email or password"}), 401
+        if user.banned:
+            return jsonify({"error": "This account has been suspended."}), 403
+        try:
+            user.last_active = now_ts()
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        session["user_email"] = user.email
+        return jsonify({"user": user.to_dict()})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/logout", methods=["POST"])

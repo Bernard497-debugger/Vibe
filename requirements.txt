@@ -1,5 +1,7 @@
-Flask==2.3.3
-Flask-SQLAlchemy==3.0.5
-SQLAlchemy==2.0.21
+Flask==3.0.0
+Flask-SQLAlchemy==3.1.1
+SQLAlchemy==2.0.23
+cloudinary==1.36.0
+gunicorn==21.2.0
+psycopg2-binary==2.9.9
 python-dotenv==1.0.0
-Werkzeug==2.3.7

@@ -6,7 +6,7 @@ import json as _json
 from flask import Flask, request, jsonify, send_from_directory, session, render_template_string
 
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import func
+from sqlalchemy import func, text
 import cloudinary
 import cloudinary.uploader
 
@@ -203,7 +203,7 @@ with app.app_context():
     ]
     for sql in migrations:
         try:
-            db.session.execute(sql)
+            db.session.execute(text(sql))
             db.session.commit()
         except Exception:
             db.session.rollback()

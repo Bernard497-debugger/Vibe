@@ -585,11 +585,12 @@ body::after {
   position: fixed;
   inset: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   z-index: 100;
   background: var(--bg);
   padding: 20px;
+  overflow-y: auto;
 }
 
 .auth-wrap {
@@ -1485,21 +1486,21 @@ body::after {
 
 <!-- ===== AUTH SCREEN ===== -->
 <div id="authScreen">
-  <div class="auth-wrap">
-    <div class="auth-brand">
-      <div class="brand-logo">VibeNet</div>
-      <div class="brand-tag">Share moments, grow your audience, and earn from your content.</div>
-      <div class="brand-pills">
-        <span class="pill">📹 Video</span>
-        <span class="pill">💰 Earn</span>
-        <span class="pill">📈 Grow</span>
-        <span class="pill">🌐 Connect</span>
-      </div>
+  <div class="auth-wrap" style="grid-template-columns:1fr;max-width:440px;border-radius:24px">
+    <div class="auth-brand" style="padding:32px 32px 24px;text-align:center">
+      <div class="brand-logo" style="font-size:30px">⚡ VibeNet</div>
+      <div class="brand-tag" style="font-size:13px;max-width:100%">Share moments, grow your audience, and earn from your content.</div>
     </div>
 
-    <div class="auth-forms">
-      <div class="auth-section">
-        <h3>Create account</h3>
+    <div class="auth-forms" style="padding:0 24px 32px">
+      <!-- Auth Tabs -->
+      <div style="display:flex;background:rgba(255,255,255,0.04);border-radius:12px;padding:4px;margin-bottom:20px">
+        <button id="tabSignup" onclick="switchAuthTab('signup')" style="flex:1;padding:10px;border:none;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;background:var(--accent);color:#060910;transition:all 0.2s">Create Account</button>
+        <button id="tabLogin" onclick="switchAuthTab('login')" style="flex:1;padding:10px;border:none;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer;background:transparent;color:var(--muted2);transition:all 0.2s">Sign In</button>
+      </div>
+
+      <!-- Signup Form -->
+      <div id="authSignup">
         <div class="field">
           <div class="field-label">Full Name</div>
           <input id="signupName" placeholder="Your name" />
@@ -1522,12 +1523,11 @@ body::after {
           <input id="signupPic" type="file" accept="image/*" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--muted2);width:100%;font-size:13px;" />
         </div>
         <button class="btn-primary" onclick="signup()" style="width:100%;margin-top:4px;">Create Account →</button>
+        <div style="text-align:center;margin-top:14px;font-size:12px;color:#5a6a85">Already have an account? <span onclick="switchAuthTab('login')" style="color:var(--accent);cursor:pointer;font-weight:600">Sign In</span></div>
       </div>
 
-      <div class="divider"></div>
-
-      <div class="auth-section">
-        <h3>Sign in</h3>
+      <!-- Login Form -->
+      <div id="authLogin" style="display:none">
         <div class="field">
           <div class="field-label">Email</div>
           <input id="loginEmail" type="email" placeholder="you@email.com" />
@@ -1536,7 +1536,8 @@ body::after {
           <div class="field-label">Password</div>
           <input id="loginPassword" type="password" placeholder="••••••••" />
         </div>
-        <button class="btn-ghost" onclick="login()" style="width:100%;">Sign In</button>
+        <button class="btn-primary" onclick="login()" style="width:100%;">Sign In →</button>
+        <div style="text-align:center;margin-top:14px;font-size:12px;color:#5a6a85">Don't have an account? <span onclick="switchAuthTab('signup')" style="color:var(--accent);cursor:pointer;font-weight:600">Create one</span></div>
       </div>
     </div>
   </div>
@@ -1784,6 +1785,18 @@ window.addEventListener('load', async () => {
     if(j.user){ currentUser = j.user; onLogin(); }
   } catch(e) {}
 });
+
+function switchAuthTab(tab){
+  const isSignup = tab === 'signup';
+  byId('authSignup').style.display = isSignup ? 'block' : 'none';
+  byId('authLogin').style.display  = isSignup ? 'none'  : 'block';
+  byId('tabSignup').style.background = isSignup ? 'var(--accent)' : 'transparent';
+  byId('tabSignup').style.color      = isSignup ? '#060910' : 'var(--muted2)';
+  byId('tabSignup').style.fontWeight = isSignup ? '700' : '600';
+  byId('tabLogin').style.background  = isSignup ? 'transparent' : 'var(--accent)';
+  byId('tabLogin').style.color       = isSignup ? 'var(--muted2)' : '#060910';
+  byId('tabLogin').style.fontWeight  = isSignup ? '600' : '700';
+}
 
 async function signup(){
   const name = byId('signupName').value.trim();

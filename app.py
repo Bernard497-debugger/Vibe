@@ -1309,7 +1309,13 @@ body::after {
               </label>
               <span id="fileNameDisplay"></span>
             </div>
-            <button class="btn-primary" onclick="addPost()">Post →</button>
+            <button class="btn-primary" id="postBtn" onclick="addPost()">Post →</button>
+          </div>
+          <div id="uploadProgress" style="display:none;margin-top:10px">
+            <div id="uploadLabel" style="font-size:12px;color:var(--muted2,#5a6a85);margin-bottom:6px">Uploading...</div>
+            <div style="background:rgba(255,255,255,0.06);border-radius:100px;height:6px;overflow:hidden">
+              <div id="uploadBar" style="height:100%;width:0%;background:linear-gradient(90deg,#4DF0C0,#00c9ff);border-radius:100px;transition:width 0.3s ease"></div>
+            </div>
           </div>
         </div>
         <div id="feedList"></div>
@@ -1539,15 +1545,41 @@ function showTab(tab){
   if(tab === 'monet'){ loadMonetization(); loadAds();  }
 }
 
+function showUploadProgress(show, label='Uploading...'){
+  const p = byId('uploadProgress');
+  const btn = byId('postBtn');
+  if(!p) return;
+  if(show){
+    p.style.display = 'block';
+    byId('uploadLabel').textContent = label;
+    byId('uploadBar').style.width = '0%';
+    if(btn){ btn.disabled = true; btn.style.opacity = '0.5'; }
+    let w = 0;
+    p._interval = setInterval(()=>{
+      w = Math.min(w + (Math.random() * 3), 88);
+      byId('uploadBar').style.width = w + '%';
+    }, 400);
+  } else {
+    clearInterval(p._interval);
+    byId('uploadBar').style.width = '100%';
+    setTimeout(()=>{ p.style.display='none'; byId('uploadBar').style.width='0%'; }, 700);
+    if(btn){ btn.disabled = false; btn.style.opacity = '1'; }
+  }
+}
+
 async function uploadFile(file, folder='vibenet/posts'){
+  const isVideo = file.type.startsWith('video/');
+  showUploadProgress(true, `Uploading ${isVideo ? 'video' : 'image'} (${(file.size/1024/1024).toFixed(1)}MB)...`);
   try {
     const fd = new FormData();
     fd.append('file', file);
     const res = await fetch(API + '/upload', {method:'POST', body: fd});
     const j = await res.json();
+    showUploadProgress(false);
     if(j.error) throw new Error(j.error);
     return j.url || '';
   } catch(e) {
+    showUploadProgress(false);
     console.error('Upload failed:', e.message);
     alert('Upload failed: ' + e.message);
     return '';
@@ -1733,12 +1765,10 @@ async function loadFeed(){
     feed.innerHTML='<div class="empty-state"><div class="empty-icon">📭</div><p>No posts yet. Be the first to share something!</p></div>';
     return;
   }
-  // Show all approved ads at top
-  if(ads.length) ads.forEach(ad => feed.appendChild(createAdCard(ad)));
+  // Inject ads every 5 posts, cycling through all approved ads
   let adIndex = 0;
   list.forEach((p, i) => {
     feed.appendChild(createPostElement(p));
-    // Cycle ads every 5 posts
     if(ads.length && (i+1) % 5 === 0){
       feed.appendChild(createAdCard(ads[adIndex++ % ads.length]));
     }

@@ -1717,7 +1717,8 @@ function createPostElement(p){
       v.addEventListener('pause', ()=>{ wrap.classList.remove('playing'); });
       v.addEventListener('ended', async()=>{
         wrap.classList.remove('playing');
-        await fetch(API+'/watch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({viewer:currentUser?currentUser.email:'',post_id:p.id})});
+        const seconds = v.duration && isFinite(v.duration) ? Math.min(Math.round(v.duration), 300) : 0;
+        await fetch(API+'/watch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({viewer:currentUser?currentUser.email:'',post_id:p.id,seconds})});
         await fetch(API+'/ads/impression',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({post_id:p.id,viewer:currentUser?currentUser.email:''})});
         loadMonetization();
       });
@@ -2286,15 +2287,17 @@ def api_is_following():
 # ---------- Watch / Ads ----------
 @app.route("/api/watch", methods=["POST"])
 def api_watch():
-    data    = request.get_json() or {}
-    viewer  = data.get("viewer")
-    post_id = data.get("post_id")
-    post    = Post.query.get(post_id)
-    if post and post.author_email != viewer:
+    data     = request.get_json() or {}
+    viewer   = data.get("viewer")
+    post_id  = data.get("post_id")
+    seconds  = float(data.get("seconds", 0))  # actual seconds watched
+    post     = Post.query.get(post_id)
+    if post and post.author_email != viewer and seconds > 0:
         author = User.query.filter_by(email=post.author_email).first()
         if author:
-            author.watch_hours += 1
-            author.earnings    += 0.1
+            hours_watched = seconds / 3600.0
+            author.watch_hours = round(author.watch_hours + hours_watched, 4)
+            author.earnings    = round(author.earnings + (hours_watched * 0.10), 4)
             db.session.commit()
     return jsonify({"success": True})
 

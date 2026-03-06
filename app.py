@@ -2225,20 +2225,24 @@ def api_upload():
 def api_sign_upload():
     if not _cloudinary_ok():
         return jsonify({"error": "Cloudinary not configured"}), 503
-    import time, hashlib
-    data      = request.get_json() or {}
-    folder    = data.get("folder", "vibenet/posts")
-    timestamp = int(time.time())
-    params    = {"folder": folder, "timestamp": timestamp}
-    param_str = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
-    signature = hashlib.sha1((param_str + cloudinary.config().api_secret).encode(), usedforsecurity=False).hexdigest()
-    return jsonify({
-        "signature":  signature,
-        "timestamp":  timestamp,
-        "api_key":    cloudinary.config().api_key,
-        "cloud_name": cloudinary.config().cloud_name,
-        "folder":     folder,
-    })
+    try:
+        import time, hashlib
+        cfg       = cloudinary.config()
+        data      = request.get_json() or {}
+        folder    = data.get("folder", "vibenet/posts")
+        timestamp = int(time.time())
+        secret    = cfg.api_secret or ""
+        param_str = f"folder={folder}&timestamp={timestamp}"
+        signature = hashlib.sha1((param_str + secret).encode("utf-8"), usedforsecurity=False).hexdigest()
+        return jsonify({
+            "signature":  signature,
+            "timestamp":  timestamp,
+            "api_key":    cfg.api_key,
+            "cloud_name": cfg.cloud_name,
+            "folder":     folder,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/test-cloudinary")

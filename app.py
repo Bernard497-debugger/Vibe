@@ -1418,8 +1418,12 @@ body::after {
         </div>
 
         <div class="profile-header">
-          <div class="profile-avatar-wrap">
+          <div class="profile-avatar-wrap" style="position:relative">
             <img class="profile-avatar" id="profileAvatar" src="" onerror="this.style.background='var(--surface)'" />
+            <label style="position:absolute;bottom:0;right:0;background:var(--accent);color:#060910;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:13px" title="Change photo">
+              📷
+              <input type="file" accept="image/*" style="display:none" onchange="changeProfilePic(this)" />
+            </label>
           </div>
           <div class="profile-info">
             <div class="profile-name" id="profileName">—</div>
@@ -1880,6 +1884,30 @@ async function loadProfilePosts(){
   });
 }
 
+async function changeProfilePic(input){
+  if(!currentUser || !input.files[0]) return;
+  const file = input.files[0];
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('email', currentUser.email);
+  const btn = input.closest('label');
+  if(btn) btn.textContent = '⏳';
+  try {
+    const res = await fetch(API + '/update_profile_pic', {method:'POST', body: fd});
+    const j = await res.json();
+    if(j.success){
+      currentUser.profile_pic = j.profile_pic;
+      byId('profileAvatar').src = j.profile_pic;
+      byId('composerAvatar').src = j.profile_pic;
+    } else {
+      alert(j.error || 'Upload failed');
+    }
+  } catch(e) {
+    alert('Upload failed: ' + e.message);
+  }
+  if(btn){ btn.innerHTML = '📷<input type="file" accept="image/*" style="display:none" onchange="changeProfilePic(this)" />'; }
+}
+
 async function updateBio(){
   if(!currentUser) return;
   const bio = byId('profileBio').value.trim();
@@ -2255,6 +2283,29 @@ def api_update_bio():
         user.bio = data.get("bio", "")
         db.session.commit()
     return jsonify({"success": True})
+
+
+@app.route("/api/update_profile_pic", methods=["POST"])
+def api_update_profile_pic():
+    if "file" not in request.files:
+        return jsonify({"error": "No file"}), 400
+    f     = request.files["file"]
+    email = request.form.get("email", "")
+    user  = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    data = f.read()
+    if len(data) > 5 * 1024 * 1024:
+        return jsonify({"error": "Image too large (max 5MB)"}), 400
+    import base64
+    mime     = f.mimetype or "image/jpeg"
+    b64      = base64.b64encode(data).decode("utf-8")
+    media_id = uuid.uuid4().hex
+    mf = MediaFile(id=media_id, mime=mime, data=b64)
+    db.session.add(mf)
+    user.profile_pic = f"/media/{media_id}"
+    db.session.commit()
+    return jsonify({"success": True, "profile_pic": user.profile_pic})
 
 
 # ---------- Following ----------

@@ -161,6 +161,7 @@ class Ad(db.Model):
     impressions      = db.Column(db.Integer, default=0)
     clicks           = db.Column(db.Integer, default=0)
     approved         = db.Column(db.Integer, default=0)  # 0=pending, 1=approved, 2=rejected
+    expiry_date      = db.Column(db.Text, default="")
     created_at       = db.Column(db.Text, default=lambda: now_ts())
 
     def to_dict(self):
@@ -168,7 +169,7 @@ class Ad(db.Model):
             "id": self.id, "title": self.title, "owner_email": self.owner_email,
             "whatsapp_number": self.whatsapp_number or "",
             "budget": self.budget, "impressions": self.impressions, "clicks": self.clicks,
-            "approved": self.approved,
+            "approved": self.approved, "expiry_date": self.expiry_date or "",
         }
 
 
@@ -210,6 +211,7 @@ with app.app_context():
         "ALTER TABLE users ADD COLUMN last_active TEXT DEFAULT ''",
         "ALTER TABLE ads ADD COLUMN approved INTEGER DEFAULT 0",
         "ALTER TABLE ads ADD COLUMN whatsapp_number TEXT DEFAULT ''",
+        "ALTER TABLE ads ADD COLUMN expiry_date TEXT DEFAULT ''",
         "ALTER TABLE payout_requests ADD COLUMN user_email TEXT DEFAULT ''",
         "ALTER TABLE payout_requests ADD COLUMN user_name TEXT DEFAULT ''",
         "ALTER TABLE payout_requests ADD COLUMN om_number TEXT DEFAULT ''",
@@ -1372,7 +1374,7 @@ body::after {
             </div>
             <div style="width:130px">
               <div class="form-label" style="margin-bottom:6px">Budget (BWP)</div>
-              <input id="adBudget" class="form-input" type="number" min="1" placeholder="50" style="width:100%" />
+              <input id="adBudget" class="form-input" type="number" min="150" placeholder="150 = 15 days" style="width:100%" />
             </div>
             <div style="flex:1;min-width:160px">
               <div class="form-label" style="margin-bottom:6px">WhatsApp Number</div>
@@ -1936,14 +1938,16 @@ async function createAd(){
   const budget   = parseFloat(byId('adBudget').value||0);
   const whatsapp = byId('adWhatsapp').value.trim();
   const msg      = byId('adMsg');
-  if(!title || !budget){ alert('Please enter a title and budget.'); return; }
+  if(!title){ alert('Please enter a campaign title.'); return; }
   if(!whatsapp){ alert('Please enter your WhatsApp number.'); return; }
+  if(budget < 150){ alert('Minimum budget is P150 (15 days). P10 per day.'); return; }
+  const days = Math.floor(budget / 10);
   await fetch(API+'/ads',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title, budget, whatsapp_number: whatsapp, owner: currentUser.email})});
   byId('adTitle').value=''; byId('adBudget').value=''; byId('adWhatsapp').value='';
   msg.style.display = 'block';
   msg.style.color = 'var(--accent)';
-  msg.textContent = '✅ Campaign submitted! Please send P' + budget.toFixed(2) + ' via Orange Money to 72927417. Your campaign goes live once we confirm your payment.';
-  setTimeout(()=>{ msg.style.display='none'; }, 10000);
+  msg.textContent = `✅ Campaign submitted for ${days} days! Please send P${budget.toFixed(2)} via Orange Money to 72927417. Your campaign goes live once we confirm your payment.`;
+  setTimeout(()=>{ msg.style.display='none'; }, 12000);
   loadAds();
 }
 
@@ -2298,18 +2302,30 @@ def api_watch():
 @app.route("/api/ads", methods=["GET", "POST"])
 def api_ads():
     if request.method == "POST":
-        data = request.get_json() or {}
-        ad   = Ad(
+        data   = request.get_json() or {}
+        budget = float(data.get("budget", 0))
+        if budget < 150:
+            return jsonify({"error": "Minimum budget is P150 (15 days)"}), 400
+        days = int(budget // 10)
+        import datetime as dt
+        expiry = (dt.datetime.utcnow() + dt.timedelta(days=days)).strftime("%Y-%m-%d")
+        ad = Ad(
             title           = data.get("title"),
             owner_email     = data.get("owner"),
             whatsapp_number = data.get("whatsapp_number", ""),
-            budget          = data.get("budget", 0),
+            budget          = budget,
             approved        = 0,
+            expiry_date     = expiry,
         )
         db.session.add(ad)
         db.session.commit()
-        return jsonify({"message": "Ad created"})
-    ads = Ad.query.filter_by(approved=1).order_by(Ad.id.desc()).all()
+        return jsonify({"message": f"Ad created. Runs for {days} days until {expiry}."})
+    # Only return approved, non-expired ads
+    import datetime as dt
+    today = dt.datetime.utcnow().strftime("%Y-%m-%d")
+    ads = Ad.query.filter_by(approved=1).filter(
+        (Ad.expiry_date == None) | (Ad.expiry_date >= today)
+    ).order_by(Ad.id.desc()).all()
     return jsonify([a.to_dict() for a in ads])
 
 
@@ -2453,6 +2469,7 @@ def _build_admin_page():
           <td style="padding:10px 8px">{a.owner_email}</td>
           <td style="padding:10px 8px">P{a.budget:.2f}</td>
           <td style="padding:10px 8px">{a.whatsapp_number or '—'}</td>
+          <td style="padding:10px 8px">{a.expiry_date or '—'}</td>
           <td style="padding:10px 8px">{status}</td>
           <td style="padding:10px 8px;display:flex;gap:6px">
             <form method="post" action="/api/admin/ads/{a.id}/approve" style="display:inline">
@@ -2513,7 +2530,7 @@ def _build_admin_page():
 
     <div class="card"><div class="section-title">📢 Ad Campaigns</div><div class="overflow"><table style="{TABLE}">
       <tr><th style="{TH}">ID</th><th style="{TH}">Title</th><th style="{TH}">Owner</th>
-      <th style="{TH}">Budget</th><th style="{TH}">WhatsApp</th><th style="{TH}">Status</th><th style="{TH}">Actions</th></tr>
+      <th style="{TH}">Budget</th><th style="{TH}">WhatsApp</th><th style="{TH}">Expires</th><th style="{TH}">Status</th><th style="{TH}">Actions</th></tr>
       {ad_rows}</table></div></div>
 
     <div class="card"><div class="section-title">💸 Payout Requests</div><div class="overflow"><table style="{TABLE}">

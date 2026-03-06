@@ -176,6 +176,13 @@ class PayoutRequest(db.Model):
         }
 
 
+class MediaFile(db.Model):
+    __tablename__ = "media_files"
+    id   = db.Column(db.String(32), primary_key=True)
+    mime = db.Column(db.Text, default="application/octet-stream")
+    data = db.Column(db.Text, nullable=False)  # base64 encoded
+
+
 # ---------- Create tables ----------
 with app.app_context():
     try:
@@ -2114,6 +2121,17 @@ async function adminWipePosts(){
 </html>
 """
 
+@app.route("/media/<media_id>")
+def serve_media(media_id):
+    mf = MediaFile.query.get(media_id)
+    if not mf:
+        return "Not found", 404
+    import base64
+    from flask import Response
+    data = base64.b64decode(mf.data)
+    return Response(data, mimetype=mf.mime)
+
+
 @app.route("/")
 def index():
     return render_template_string(HTML)
@@ -2176,18 +2194,18 @@ def api_upload():
     f = request.files["file"]
     if not f.filename:
         return jsonify({"error": "No filename"}), 400
-    import base64
     data = f.read()
-    if len(data) > 20 * 1024 * 1024:
-        return jsonify({"error": "File too large (max 20MB)"}), 400
-    mime = f.mimetype or "application/octet-stream"
-    b64  = base64.b64encode(data).decode("utf-8")
-    data_url = f"data:{mime};base64,{b64}"
-    return jsonify({"url": data_url})
-
-
-
-
+    if len(data) > 50 * 1024 * 1024:
+        return jsonify({"error": "File too large (max 50MB)"}), 400
+    import base64
+    mime     = f.mimetype or "application/octet-stream"
+    b64      = base64.b64encode(data).decode("utf-8")
+    media_id = uuid.uuid4().hex
+    # Store in DB as a MediaFile record
+    mf = MediaFile(id=media_id, mime=mime, data=b64)
+    db.session.add(mf)
+    db.session.commit()
+    return jsonify({"url": f"/media/{media_id}"})
 
 @app.route("/api/posts/<int:post_id>", methods=["DELETE", "PATCH"])
 def api_post_modify(post_id):

@@ -302,6 +302,227 @@ def uploaded_file(filename):
 
 
 # ---------- Frontend ----------
+
+PRIVACY_HTML = r"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Privacy Policy — VibeNet</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#060910;color:#c8d8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;padding:0}
+  .container{max-width:720px;margin:0 auto;padding:40px 24px 80px}
+  .back{display:inline-flex;align-items:center;gap:6px;color:#4DF0C0;text-decoration:none;font-size:14px;font-weight:600;margin-bottom:32px}
+  .back:hover{opacity:0.8}
+  .logo{font-size:22px;font-weight:900;color:#4DF0C0;margin-bottom:8px}
+  h1{font-size:28px;font-weight:800;color:#e8f0ff;margin-bottom:6px}
+  .subtitle{font-size:14px;color:#5a6a85;margin-bottom:40px}
+  h2{font-size:17px;font-weight:700;color:#4DF0C0;margin:32px 0 10px;padding-top:8px;border-top:1px solid rgba(77,240,192,0.1)}
+  p{font-size:14px;color:#9aacc8;margin-bottom:12px}
+  ul{padding-left:20px;margin-bottom:12px}
+  li{font-size:14px;color:#9aacc8;margin-bottom:6px}
+  .footer{margin-top:48px;padding-top:24px;border-top:1px solid rgba(255,255,255,0.07);font-size:13px;color:#5a6a85;text-align:center}
+  a{color:#4DF0C0}
+</style>
+</head>
+<body>
+<div class="container">
+  <a href="/" class="back">← Back to VibeNet</a>
+  <div class="logo">⚡ VibeNet</div>
+  <h1>Privacy Policy</h1>
+  <div class="subtitle">Last updated: January 2025 · Effective immediately</div>
+
+  <h2>1. Who We Are</h2>
+  <p>VibeNet is a social media and creator monetisation platform operated in Botswana. We are committed to protecting your personal information in accordance with the <strong>Botswana Data Protection Act, 2018</strong>.</p>
+  <p>For privacy questions, contact us at: <a href="mailto:botsile55@gmail.com">botsile55@gmail.com</a></p>
+
+  <h2>2. Information We Collect</h2>
+  <p>When you use VibeNet, we collect:</p>
+  <ul>
+    <li><strong>Account information</strong> — your name, email address, and password (stored encrypted)</li>
+    <li><strong>Profile content</strong> — profile picture, bio, posts, videos, and images you upload</li>
+    <li><strong>Activity data</strong> — posts, reactions, comments, follows, and watch history</li>
+    <li><strong>Financial information</strong> — Orange Money number and payout amounts when you request earnings</li>
+    <li><strong>Usage data</strong> — last active time, watch hours, and engagement metrics</li>
+  </ul>
+  <p>We do <strong>not</strong> collect payment card details, government IDs, or sensitive personal data beyond what is listed above.</p>
+
+  <h2>3. How We Use Your Information</h2>
+  <ul>
+    <li>To operate your account and provide platform features</li>
+    <li>To calculate and process creator earnings and payouts</li>
+    <li>To display your content and profile to other users</li>
+    <li>To send you platform notifications (reactions, follows, comments)</li>
+    <li>To review reports and moderate content for safety</li>
+    <li>To improve the platform and fix issues</li>
+  </ul>
+
+  <h2>4. How We Store Your Data</h2>
+  <p>Your data is stored securely on cloud servers (Render.com) with PostgreSQL databases. Media files including profile pictures, images, and videos are stored directly in our database. We do not share your data with third-party advertisers.</p>
+  <p>Passwords are stored using one-way hashing. We recommend using a unique password for VibeNet.</p>
+
+  <h2>5. Who Can See Your Information</h2>
+  <ul>
+    <li><strong>Your posts and profile</strong> — visible to all VibeNet users</li>
+    <li><strong>Your email address</strong> — only visible to VibeNet admins, never shown publicly</li>
+    <li><strong>Your Orange Money number</strong> — only used for processing your payout, visible only to admins</li>
+    <li><strong>Your earnings</strong> — only visible to you and admins</li>
+  </ul>
+
+  <h2>6. Advertiser Data</h2>
+  <p>If you run an ad campaign on VibeNet, your campaign title, WhatsApp number, and budget are stored. Your WhatsApp number is shown to users who click your ad so they can contact you directly. This is a feature you opt into by creating a campaign.</p>
+
+  <h2>7. Your Rights</h2>
+  <p>Under the Botswana Data Protection Act 2018, you have the right to:</p>
+  <ul>
+    <li>Access the personal data we hold about you</li>
+    <li>Request correction of inaccurate data</li>
+    <li>Request deletion of your account and associated data</li>
+    <li>Object to how we process your data</li>
+  </ul>
+  <p>To exercise any of these rights, email us at <a href="mailto:botsile55@gmail.com">botsile55@gmail.com</a>. We will respond within 14 days.</p>
+
+  <h2>8. Data Retention</h2>
+  <p>We retain your data for as long as your account is active. If you request account deletion, we will remove your personal data within 30 days, except where we are required by law to retain certain records.</p>
+
+  <h2>9. Children's Privacy</h2>
+  <p>VibeNet is not intended for users under the age of 13. We do not knowingly collect data from children. If you believe a child has created an account, please contact us immediately.</p>
+
+  <h2>10. Changes to This Policy</h2>
+  <p>We may update this Privacy Policy from time to time. We will notify users of significant changes via the platform. Continued use of VibeNet after changes constitutes acceptance of the updated policy.</p>
+
+  <div class="footer">
+    VibeNet · Botswana · <a href="/terms">Terms &amp; Conditions</a> · <a href="/">Back to App</a>
+  </div>
+</div>
+</body>
+</html>
+"""
+
+TERMS_HTML = r"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Terms &amp; Conditions — VibeNet</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#060910;color:#c8d8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;padding:0}
+  .container{max-width:720px;margin:0 auto;padding:40px 24px 80px}
+  .back{display:inline-flex;align-items:center;gap:6px;color:#4DF0C0;text-decoration:none;font-size:14px;font-weight:600;margin-bottom:32px}
+  .back:hover{opacity:0.8}
+  .logo{font-size:22px;font-weight:900;color:#4DF0C0;margin-bottom:8px}
+  h1{font-size:28px;font-weight:800;color:#e8f0ff;margin-bottom:6px}
+  .subtitle{font-size:14px;color:#5a6a85;margin-bottom:40px}
+  h2{font-size:17px;font-weight:700;color:#4DF0C0;margin:32px 0 10px;padding-top:8px;border-top:1px solid rgba(77,240,192,0.1)}
+  p{font-size:14px;color:#9aacc8;margin-bottom:12px}
+  ul{padding-left:20px;margin-bottom:12px}
+  li{font-size:14px;color:#9aacc8;margin-bottom:6px}
+  .highlight{background:rgba(77,240,192,0.06);border-left:3px solid #4DF0C0;padding:12px 16px;border-radius:0 8px 8px 0;margin-bottom:16px}
+  .footer{margin-top:48px;padding-top:24px;border-top:1px solid rgba(255,255,255,0.07);font-size:13px;color:#5a6a85;text-align:center}
+  a{color:#4DF0C0}
+</style>
+</head>
+<body>
+<div class="container">
+  <a href="/" class="back">← Back to VibeNet</a>
+  <div class="logo">⚡ VibeNet</div>
+  <h1>Terms &amp; Conditions</h1>
+  <div class="subtitle">Last updated: January 2025 · By using VibeNet you agree to these terms</div>
+
+  <div class="highlight">
+    <strong style="color:#e8f0ff">Summary:</strong> Be respectful, post original content, don't scam people, and follow Botswana law. We reserve the right to remove content and ban accounts that violate these terms.
+  </div>
+
+  <h2>1. Acceptance of Terms</h2>
+  <p>By creating an account or using VibeNet, you agree to be bound by these Terms and Conditions and our <a href="/privacy">Privacy Policy</a>. If you do not agree, do not use the platform.</p>
+
+  <h2>2. Eligibility</h2>
+  <ul>
+    <li>You must be at least 13 years old to use VibeNet</li>
+    <li>You must provide accurate information when creating your account</li>
+    <li>You are responsible for maintaining the security of your account and password</li>
+    <li>One account per person — creating multiple accounts to abuse the system is prohibited</li>
+  </ul>
+
+  <h2>3. Content Rules</h2>
+  <p>You are solely responsible for content you post on VibeNet. The following content is <strong style="color:#f06a4d">strictly prohibited</strong>:</p>
+  <ul>
+    <li>Nudity, pornography, or sexually explicit material</li>
+    <li>Hate speech, tribalism, racism, or content that incites violence</li>
+    <li>Harassment, bullying, or threats targeting individuals</li>
+    <li>Spam, scams, pyramid schemes, or fraudulent content</li>
+    <li>Content that infringes on copyright or intellectual property</li>
+    <li>Misinformation that could cause public harm</li>
+    <li>Content that violates Botswana law, including the Cybercrime and Computer Related Crimes Act</li>
+    <li>Personal information of others posted without their consent</li>
+  </ul>
+  <p>We reserve the right to remove any content that violates these rules without notice.</p>
+
+  <h2>4. Creator Monetisation</h2>
+  <p>VibeNet offers a creator earnings programme subject to the following conditions:</p>
+  <ul>
+    <li>You must reach <strong>1,000 followers</strong> and <strong>4,000 watch hours</strong> to be eligible for payouts</li>
+    <li>Earnings are calculated at <strong>P0.10 per watch hour</strong> based on actual video watch time</li>
+    <li>Minimum payout threshold applies — you must have sufficient balance before requesting</li>
+    <li>Payouts are processed manually via Orange Money within <strong>24–48 hours</strong> of approval</li>
+    <li>VibeNet reserves the right to adjust earning rates with notice to creators</li>
+    <li>Artificially inflating watch hours or followers through bots or fake accounts will result in permanent ban and forfeiture of earnings</li>
+  </ul>
+
+  <h2>5. Advertising</h2>
+  <ul>
+    <li>Ad campaigns require a minimum budget of <strong>P150</strong> (15 days at P10/day)</li>
+    <li>Payment must be sent via Orange Money before your campaign goes live</li>
+    <li>VibeNet does not guarantee specific impressions or clicks</li>
+    <li>Ads must comply with Botswana advertising standards and must not contain prohibited content</li>
+    <li>Refunds are not available once a campaign has been approved and activated</li>
+  </ul>
+
+  <h2>6. Verified Badge</h2>
+  <ul>
+    <li>The VibeNet Verified badge costs a one-time fee of <strong>P50</strong></li>
+    <li>Payment must be sent via Orange Money before your request is reviewed</li>
+    <li>Approval is at VibeNet's sole discretion</li>
+    <li>The badge can be revoked if you violate these Terms</li>
+    <li>The P50 fee is non-refundable</li>
+  </ul>
+
+  <h2>7. Intellectual Property</h2>
+  <p>You retain ownership of content you post on VibeNet. By posting, you grant VibeNet a non-exclusive licence to display and distribute your content on the platform. You confirm that you own or have the right to post all content you upload.</p>
+  <p>VibeNet's name, logo, and branding are our intellectual property and may not be used without permission.</p>
+
+  <h2>8. Account Suspension and Termination</h2>
+  <p>VibeNet may suspend or permanently ban accounts that:</p>
+  <ul>
+    <li>Repeatedly violate content rules</li>
+    <li>Engage in fraud or attempt to manipulate the earnings system</li>
+    <li>Receive multiple verified reports from other users</li>
+    <li>Are found to be impersonating another person or organisation</li>
+  </ul>
+  <p>Banned accounts forfeit any pending earnings or payout requests.</p>
+
+  <h2>9. Limitation of Liability</h2>
+  <p>VibeNet is provided "as is". We do not guarantee uninterrupted service and are not liable for any loss of data, lost earnings due to downtime, or damages resulting from use of the platform. Our maximum liability to you shall not exceed the total amount paid by you to VibeNet in the 12 months preceding the claim.</p>
+
+  <h2>10. Governing Law</h2>
+  <p>These Terms are governed by the laws of the <strong>Republic of Botswana</strong>. Any disputes shall be subject to the jurisdiction of the courts of Botswana.</p>
+
+  <h2>11. Changes to Terms</h2>
+  <p>We may update these Terms from time to time. Continued use of VibeNet after changes constitutes acceptance. We will notify users of significant changes via the platform.</p>
+
+  <h2>12. Contact</h2>
+  <p>For any questions about these Terms, contact us at <a href="mailto:botsile55@gmail.com">botsile55@gmail.com</a>.</p>
+
+  <div class="footer">
+    VibeNet · Botswana · <a href="/privacy">Privacy Policy</a> · <a href="/">Back to App</a>
+  </div>
+</div>
+</body>
+</html>
+"""
+
 HTML = r"""
 <!doctype html>
 <html lang="en">
@@ -2260,6 +2481,17 @@ async function deleteComment(commentId, postId){
 
 async function refreshAll(){ await loadFeed(); await loadNotifications(); await loadProfilePosts(); await loadMonetization(); await loadAds(); }
 </script>
+
+<div style="text-align:center;padding:32px 16px 48px;border-top:1px solid rgba(255,255,255,0.05);margin-top:24px">
+  <div style="font-size:18px;font-weight:900;color:#4DF0C0;margin-bottom:8px">⚡ VibeNet</div>
+  <div style="font-size:12px;color:#3a4a60;margin-bottom:10px">Botswana's Creator Platform</div>
+  <div style="display:flex;justify-content:center;gap:20px;font-size:12px">
+    <a href="/privacy" target="_blank" style="color:#5a6a85;text-decoration:none">Privacy Policy</a>
+    <a href="/terms" target="_blank" style="color:#5a6a85;text-decoration:none">Terms &amp; Conditions</a>
+  </div>
+  <div style="font-size:11px;color:#2a3a50;margin-top:10px">© 2025 VibeNet. All rights reserved.</div>
+</div>
+
 </body>
 </html>
 """
@@ -2267,6 +2499,14 @@ async function refreshAll(){ await loadFeed(); await loadNotifications(); await 
 @app.route("/")
 def index():
     return render_template_string(HTML)
+
+@app.route("/privacy")
+def privacy_page():
+    return render_template_string(PRIVACY_HTML)
+
+@app.route("/terms")
+def terms_page():
+    return render_template_string(TERMS_HTML)
 
 # ---------- API: Auth ----------
 @app.route("/api/signup", methods=["POST"])

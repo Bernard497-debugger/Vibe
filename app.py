@@ -198,6 +198,40 @@ class MediaFile(db.Model):
     data = db.Column(db.Text, nullable=False)
 
 
+class Comment(db.Model):
+    __tablename__ = "comments"
+    id           = db.Column(db.Integer, primary_key=True)
+    post_id      = db.Column(db.Integer, nullable=False)
+    author_email = db.Column(db.Text, nullable=False)
+    author_name  = db.Column(db.Text, default="")
+    profile_pic  = db.Column(db.Text, default="")
+    text         = db.Column(db.Text, nullable=False)
+    timestamp    = db.Column(db.Text, default=lambda: now_ts())
+
+    def to_dict(self):
+        return {
+            "id": self.id, "post_id": self.post_id,
+            "author_email": self.author_email, "author_name": self.author_name,
+            "profile_pic": self.profile_pic, "text": self.text,
+            "timestamp": self.timestamp,
+        }
+
+
+class VerifiedRequest(db.Model):
+    __tablename__ = "verified_requests"
+    id         = db.Column(db.Integer, primary_key=True)
+    user_email = db.Column(db.Text, nullable=False)
+    user_name  = db.Column(db.Text, default="")
+    status     = db.Column(db.Text, default="pending")  # pending | approved | rejected
+    created_at = db.Column(db.Text, default=lambda: now_ts())
+
+    def to_dict(self):
+        return {
+            "id": self.id, "user_email": self.user_email, "user_name": self.user_name,
+            "status": self.status, "created_at": self.created_at,
+        }
+
+
 # ---------- Create tables ----------
 with app.app_context():
     try:
@@ -219,6 +253,7 @@ with app.app_context():
         "ALTER TABLE payout_requests ADD COLUMN status TEXT DEFAULT 'pending'",
         "ALTER TABLE payout_requests ADD COLUMN created_at TEXT DEFAULT ''",
         "ALTER TABLE posts ADD COLUMN file_mime TEXT DEFAULT ''",
+        "ALTER TABLE posts ADD COLUMN comments_count INTEGER DEFAULT 0",
     ]
     for sql in migrations:
         try:
@@ -1437,6 +1472,14 @@ body::after {
 
         <div class="monet-section-title">My Posts</div>
         <div id="profilePosts"></div>
+
+        <div class="monet-section-title" style="margin-top:24px">✦ Verified Badge</div>
+        <div style="background:rgba(77,240,192,0.04);border:1px solid rgba(77,240,192,0.15);border-radius:14px;padding:18px;margin-bottom:16px">
+          <div id="verifiedStatus" style="font-size:13px;color:#8899b4;margin-bottom:12px">Loading...</div>
+          <div style="font-size:13px;color:#c8d8f0;margin-bottom:14px">Get the <strong style="color:#4DF0C0">✦ VibeNet Verified</strong> badge on your profile and posts. One-time fee of <strong>P50</strong> via Orange Money.</div>
+          <button id="verifiedBtn" onclick="requestVerified()" class="btn-primary" style="width:100%">✦ Apply for Verified Badge — P50</button>
+          <div id="verifiedMsg" style="display:none;margin-top:10px;font-size:13px;line-height:1.6"></div>
+        </div>
       </div>
 
     </div><!-- /main-col -->
@@ -1552,7 +1595,7 @@ function showTab(tab){
   byId(tab).classList.add('visible');
   if(navMap[tab]) byId(navMap[tab]).classList.add('active');
 
-  if(tab === 'profile') loadProfilePosts();
+  if(tab === 'profile'){ loadProfilePosts(); loadVerifiedStatus(); }
   if(tab === 'notifications') loadNotifications(true);
   if(tab === 'monet'){ loadMonetization(); loadAds();  }
 }
@@ -1761,8 +1804,24 @@ function createPostElement(p){
   });
 
   const cc=document.createElement('div'); cc.className='comment-count'; cc.innerHTML=`💬 ${p.comments_count||0}`;
+  cc.style.cursor='pointer';
+  cc.onclick=()=>toggleComments(p.id, div);
   footer.append(bar, cc);
   div.append(footer);
+
+  // Comments section (hidden by default)
+  const commentsSection = document.createElement('div');
+  commentsSection.id = `comments-${p.id}`;
+  commentsSection.style.cssText = 'display:none;border-top:1px solid rgba(255,255,255,0.06);padding:12px 0 4px';
+  commentsSection.innerHTML = `
+    <div id="comment-list-${p.id}" style="margin-bottom:10px"></div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <img src="${currentUser?currentUser.profile_pic||'':''}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;background:var(--surface)" onerror="this.src=''">
+      <input id="comment-input-${p.id}" type="text" placeholder="Add a comment..." style="flex:1;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:8px 14px;color:#e8f0ff;font-size:13px;outline:none"
+        onkeydown="if(event.key==='Enter')postComment(${p.id})">
+      <button onclick="postComment(${p.id})" style="background:var(--accent);color:#060910;border:none;border-radius:20px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer">Send</button>
+    </div>`;
+  div.append(commentsSection);
   return div;
 }
 
@@ -2012,6 +2071,118 @@ async function saveEditPost(){
 
 
 
+
+async function requestVerified(){
+  if(!currentUser) return;
+  const btn = byId('verifiedBtn');
+  const msg = byId('verifiedMsg');
+  btn.disabled = true; btn.textContent = '⏳ Submitting...';
+  const res = await fetch(API+'/verified-request', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({email: currentUser.email})
+  });
+  const j = await res.json();
+  msg.style.display = 'block';
+  if(j.success){
+    msg.style.color = 'var(--accent)';
+    msg.textContent = '✅ ' + j.message;
+    btn.style.display = 'none';
+    byId('verifiedStatus').textContent = '⏳ Pending review';
+  } else {
+    msg.style.color = 'var(--danger)';
+    msg.textContent = '❌ ' + (j.error || 'Something went wrong');
+    btn.disabled = false; btn.textContent = '✦ Apply for Verified Badge — P50';
+  }
+  setTimeout(()=>{ msg.style.display='none'; }, 10000);
+}
+
+async function loadVerifiedStatus(){
+  if(!currentUser) return;
+  const statusEl = byId('verifiedStatus');
+  const btn = byId('verifiedBtn');
+  if(!statusEl) return;
+  if(currentUser.verified){
+    statusEl.innerHTML = '✦ You are <strong style="color:#4DF0C0">VibeNet Verified</strong> 🎉';
+    if(btn) btn.style.display = 'none';
+    return;
+  }
+  const res = await fetch(API+'/verified-request/status/'+encodeURIComponent(currentUser.email));
+  const j = await res.json();
+  if(j.status === 'pending'){
+    statusEl.textContent = '⏳ Your request is under review';
+    if(btn) btn.style.display = 'none';
+  } else if(j.status === 'rejected'){
+    statusEl.textContent = '❌ Previous request was rejected. You may apply again.';
+  } else {
+    statusEl.textContent = 'Not verified yet. Apply below.';
+  }
+}
+
+async function toggleComments(postId, postDiv){
+  const section = byId(`comments-${postId}`);
+  if(!section) return;
+  if(section.style.display === 'none'){
+    section.style.display = 'block';
+    await loadComments(postId);
+  } else {
+    section.style.display = 'none';
+  }
+}
+
+async function loadComments(postId){
+  const list = byId(`comment-list-${postId}`);
+  if(!list) return;
+  const res = await fetch(API+`/posts/${postId}/comments`);
+  const comments = await res.json();
+  list.innerHTML = '';
+  if(!comments.length){
+    list.innerHTML = '<div style="font-size:12px;color:#5a6a85;padding:4px 0">No comments yet. Be first!</div>';
+    return;
+  }
+  comments.forEach(c => {
+    const d = document.createElement('div');
+    d.style.cssText = 'display:flex;gap:8px;margin-bottom:10px;align-items:flex-start';
+    const isOwn = currentUser && currentUser.email === c.author_email;
+    d.innerHTML = `
+      <img src="${c.profile_pic||''}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;background:var(--surface);flex-shrink:0" onerror="this.src=''">
+      <div style="flex:1;background:rgba(255,255,255,0.04);border-radius:12px;padding:8px 12px">
+        <div style="font-size:12px;font-weight:700;color:#4DF0C0;margin-bottom:2px">${escapeHtml(c.author_name||'User')}</div>
+        <div style="font-size:13px;color:#c8d8f0">${escapeHtml(c.text)}</div>
+        <div style="font-size:11px;color:#5a6a85;margin-top:4px">${escapeHtml(c.timestamp)}</div>
+      </div>
+      ${isOwn ? `<button onclick="deleteComment(${c.id},${postId})" style="background:none;border:none;color:#5a6a85;font-size:14px;cursor:pointer;padding:4px">🗑</button>` : ''}`;
+    list.appendChild(d);
+  });
+}
+
+async function postComment(postId){
+  if(!currentUser){ alert('Please login to comment'); return; }
+  const input = byId(`comment-input-${postId}`);
+  const text = input.value.trim();
+  if(!text) return;
+  input.value = '';
+  await fetch(API+`/posts/${postId}/comments`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      author_email: currentUser.email, author_name: currentUser.name,
+      profile_pic: currentUser.profile_pic||'', text
+    })
+  });
+  await loadComments(postId);
+  // Update comment count display
+  const cc = document.querySelector(`#comments-${postId}`)?.previousElementSibling?.querySelector('.comment-count');
+  if(cc) cc.innerHTML = `💬 ${parseInt(cc.textContent.replace('💬','').trim()||0)+1}`;
+}
+
+async function deleteComment(commentId, postId){
+  if(!currentUser) return;
+  if(!confirm('Delete this comment?')) return;
+  await fetch(API+`/comments/${commentId}`, {
+    method:'DELETE', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({email: currentUser.email})
+  });
+  await loadComments(postId);
+}
 
 async function refreshAll(){ await loadFeed(); await loadNotifications(); await loadProfilePosts(); await loadMonetization(); await loadAds(); }
 </script>
@@ -2385,6 +2556,77 @@ def api_wipe_posts():
     return jsonify({"success": True, "message": "All posts and reactions deleted."})
 
 
+# ---------- Comments ----------
+@app.route("/api/posts/<int:post_id>/comments", methods=["GET", "POST"])
+def api_comments(post_id):
+    if request.method == "GET":
+        comments = Comment.query.filter_by(post_id=post_id).order_by(Comment.id.asc()).all()
+        return jsonify([c.to_dict() for c in comments])
+    data = request.get_json() or {}
+    text = data.get("text", "").strip()
+    if not text:
+        return jsonify({"error": "Comment cannot be empty"}), 400
+    c = Comment(
+        post_id      = post_id,
+        author_email = data.get("author_email", ""),
+        author_name  = data.get("author_name", ""),
+        profile_pic  = data.get("profile_pic", ""),
+        text         = text,
+    )
+    db.session.add(c)
+    post = Post.query.get(post_id)
+    if post:
+        post.comments_count = (post.comments_count or 0) + 1
+        if post.author_email != c.author_email:
+            db.session.add(Notification(
+                user_email=post.author_email,
+                text=f"{c.author_name or c.author_email} commented on your post"
+            ))
+    db.session.commit()
+    return jsonify(c.to_dict())
+
+
+@app.route("/api/comments/<int:comment_id>", methods=["DELETE"])
+def api_delete_comment(comment_id):
+    data = request.get_json() or {}
+    c    = Comment.query.get_or_404(comment_id)
+    if c.author_email != data.get("email"):
+        return jsonify({"error": "Unauthorized"}), 403
+    post = Post.query.get(c.post_id)
+    if post:
+        post.comments_count = max(0, (post.comments_count or 1) - 1)
+    db.session.delete(c)
+    db.session.commit()
+    return jsonify({"success": True})
+
+
+# ---------- Verified Badge Requests ----------
+@app.route("/api/verified-request", methods=["POST"])
+def api_verified_request():
+    data  = request.get_json() or {}
+    email = data.get("email", "").strip()
+    user  = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    if user.verified:
+        return jsonify({"error": "Already verified"}), 400
+    existing = VerifiedRequest.query.filter_by(user_email=email, status="pending").first()
+    if existing:
+        return jsonify({"error": "You already have a pending request"}), 400
+    vr = VerifiedRequest(user_email=email, user_name=user.name or "")
+    db.session.add(vr)
+    db.session.commit()
+    return jsonify({"success": True, "message": "Request submitted! Pay P50 via Orange Money to 72927417 with reference 'VERIFY'. We'll review within 24hrs."})
+
+
+@app.route("/api/verified-request/status/<email>")
+def api_verified_request_status(email):
+    vr = VerifiedRequest.query.filter_by(user_email=email).order_by(VerifiedRequest.id.desc()).first()
+    if not vr:
+        return jsonify({"status": None})
+    return jsonify({"status": vr.status, "created_at": vr.created_at})
+
+
 # ---------- Payout Requests ----------
 @app.route("/api/payout", methods=["POST"])
 def api_payout_request():
@@ -2529,6 +2771,20 @@ def _build_admin_page():
           </td>
         </tr>"""
 
+    vreqs = VerifiedRequest.query.order_by(VerifiedRequest.id.desc()).all()
+    vreq_rows = ""
+    for v in vreqs:
+        vreq_rows += f"""<tr style="border-bottom:1px solid rgba(255,255,255,0.05)">
+          <td style="padding:10px 8px">{v.id}</td>
+          <td style="padding:10px 8px">{v.user_name or '—'}</td>
+          <td style="padding:10px 8px">{v.user_email}</td>
+          <td style="padding:10px 8px">{v.status}</td>
+          <td style="padding:10px 8px">{v.created_at or '—'}</td>
+          <td style="padding:10px 8px;display:flex;gap:6px">
+            {'<form method="post" action="/api/admin/verified/'+str(v.id)+'/approve" style="display:inline"><input type="hidden" name="action" value="approve"><button style="'+BTN_GREEN+'">✦ Approve</button></form><form method="post" action="/api/admin/verified/'+str(v.id)+'/approve" style="display:inline"><input type="hidden" name="action" value="reject"><button style="'+BTN_RED+'">✕ Reject</button></form>' if v.status=='pending' else v.status}
+          </td>
+        </tr>"""
+
     TH = "padding:10px 8px;text-align:left;color:#4DF0C0;font-size:12px;border-bottom:1px solid rgba(77,240,192,0.2)"
     TABLE = "width:100%;border-collapse:collapse;font-size:13px;color:#c8d8f0"
 
@@ -2568,6 +2824,11 @@ def _build_admin_page():
       <tr><th style="{TH}">ID</th><th style="{TH}">Email</th><th style="{TH}">OM Number</th>
       <th style="{TH}">Amount</th><th style="{TH}">Status</th><th style="{TH}">Date</th><th style="{TH}">Action</th></tr>
       {payout_rows}</table></div></div>
+
+    <div class="card"><div class="section-title">✦ Verified Badge Requests</div><div class="overflow"><table style="{TABLE}">
+      <tr><th style="{TH}">ID</th><th style="{TH}">Name</th><th style="{TH}">Email</th>
+      <th style="{TH}">Status</th><th style="{TH}">Date</th><th style="{TH}">Action</th></tr>
+      {vreq_rows}</table></div></div>
     </body></html>"""
 
 @app.route("/api/admin/user/ban", methods=["POST"])
@@ -2625,6 +2886,21 @@ def api_admin_mark_paid(payout_id):
     p = PayoutRequest.query.get(payout_id)
     if not p: return jsonify({"error":"Not found"}), 404
     p.status = "paid"
+    db.session.commit()
+    return redirect("/admin") if request.form else jsonify({"success":True})
+
+@app.route("/api/admin/verified/<int:vreq_id>/approve", methods=["POST"])
+def api_admin_approve_verified(vreq_id):
+    if not require_admin(): return jsonify({"error":"Unauthorized"}), 403
+    action = request.form.get("action") or (request.get_json() or {}).get("action","approve")
+    vr = VerifiedRequest.query.get(vreq_id)
+    if not vr: return jsonify({"error":"Not found"}), 404
+    vr.status = "approved" if action == "approve" else "rejected"
+    if action == "approve":
+        user = User.query.filter_by(email=vr.user_email).first()
+        if user:
+            user.verified = 1
+            db.session.add(Notification(user_email=vr.user_email, text="✦ Your verified badge has been approved! You are now VibeNet Verified."))
     db.session.commit()
     return redirect("/admin") if request.form else jsonify({"success":True})
 

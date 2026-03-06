@@ -2056,6 +2056,24 @@ function createPostElement(p){
       const v = document.createElement('video');
       v.src = optimizeCldUrl(p.file_url, true); v.controls = true; v.muted = true; v.loop = false;
       v.setAttribute('playsinline','');
+      v.setAttribute('preload', 'metadata');
+
+      // Thumbnail: capture first frame as poster
+      const canvas = document.createElement('canvas');
+      v.addEventListener('loadedmetadata', ()=>{
+        v.currentTime = 0.1;
+      });
+      v.addEventListener('seeked', ()=>{
+        if(v.dataset.thumbDone) return;
+        v.dataset.thumbDone = '1';
+        try {
+          canvas.width  = v.videoWidth  || 640;
+          canvas.height = v.videoHeight || 360;
+          canvas.getContext('2d').drawImage(v, 0, 0, canvas.width, canvas.height);
+          v.poster = canvas.toDataURL('image/jpeg', 0.7);
+        } catch(e) {}
+      }, { once: true });
+
       const hint = document.createElement('div'); hint.className='play-hint';
       hint.innerHTML='<span>▶</span>';
       v.addEventListener('play', ()=>{ wrap.classList.add('playing'); });

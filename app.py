@@ -2231,7 +2231,7 @@ def api_sign_upload():
     timestamp = int(time.time())
     params    = {"folder": folder, "timestamp": timestamp}
     param_str = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
-    signature = hashlib.sha1((param_str + cloudinary.config().api_secret).encode()).hexdigest()
+    signature = hashlib.sha1((param_str + cloudinary.config().api_secret).encode(), usedforsecurity=False).hexdigest()
     return jsonify({
         "signature":  signature,
         "timestamp":  timestamp,

@@ -1526,7 +1526,7 @@ let currentUser = null;
 function byId(id){ return document.getElementById(id); }
 function escapeHtml(s){ if(!s) return ''; return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); }
 
-function showFileName(input){
+async function showFileName(input){
   const d = byId('fileNameDisplay');
   d.textContent = input.files[0] ? input.files[0].name : '';
 }
@@ -1760,7 +1760,7 @@ async function addPost(){
   await loadFeed(); await loadProfilePosts(); await loadMonetization();
 }
 
-function createPostElement(p){
+async function createPostElement(p){
   const div = document.createElement('div'); div.className='post-card';
 
   const header = document.createElement('div'); header.className='post-header';

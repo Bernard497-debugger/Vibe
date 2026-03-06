@@ -104,6 +104,7 @@ class Post(db.Model):
     profile_pic    = db.Column(db.Text, default="")
     text           = db.Column(db.Text, default="")
     file_url       = db.Column(db.Text, default="")
+    file_mime      = db.Column(db.Text, default="")
     timestamp      = db.Column(db.Text, default=lambda: now_ts())
     reactions_json = db.Column(db.Text, default='{"👍":0,"❤️":0,"😂":0}')
     comments_count = db.Column(db.Integer, default=0)
@@ -118,7 +119,7 @@ class Post(db.Model):
         return {
             "id": self.id, "author_email": self.author_email,
             "author_name": self.author_name, "profile_pic": self.profile_pic,
-            "text": self.text, "file_url": self.file_url,
+            "text": self.text, "file_url": self.file_url, "file_mime": self.file_mime or "",
             "timestamp": self.timestamp, "reactions": self.reactions(),
             "comments_count": self.comments_count,
             "user_reaction": user_reaction,
@@ -189,6 +190,13 @@ class PayoutRequest(db.Model):
         }
 
 
+class MediaFile(db.Model):
+    __tablename__ = "media_files"
+    id   = db.Column(db.String(32), primary_key=True)
+    mime = db.Column(db.Text, default="application/octet-stream")
+    data = db.Column(db.Text, nullable=False)
+
+
 # ---------- Create tables ----------
 with app.app_context():
     try:
@@ -208,6 +216,7 @@ with app.app_context():
         "ALTER TABLE payout_requests ADD COLUMN amount FLOAT DEFAULT 0",
         "ALTER TABLE payout_requests ADD COLUMN status TEXT DEFAULT 'pending'",
         "ALTER TABLE payout_requests ADD COLUMN created_at TEXT DEFAULT ''",
+        "ALTER TABLE posts ADD COLUMN file_mime TEXT DEFAULT ''",
     ]
     for sql in migrations:
         try:
@@ -223,6 +232,15 @@ def health():
 
 
 # ---------- Static uploads ----------
+@app.route("/media/<media_id>")
+def serve_media(media_id):
+    from flask import Response
+    import base64
+    mf = MediaFile.query.get(media_id)
+    if not mf: return "Not found", 404
+    return Response(base64.b64decode(mf.data), mimetype=mf.mime)
+
+
 @app.route("/uploads/<path:filename>")
 def uploaded_file(filename):
     return send_from_directory(UPLOAD_DIR, filename)
@@ -1523,33 +1541,16 @@ function showTab(tab){
 
 async function uploadFile(file, folder='vibenet/posts'){
   try {
-    const sigRes = await fetch(API + '/sign-upload', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ folder })
-    });
-    if(!sigRes.ok){ throw new Error('Sign-upload HTTP ' + sigRes.status); }
-    const sig = await sigRes.json();
-    if(sig.error){ throw new Error('Sign error: ' + sig.error); }
     const fd = new FormData();
-    fd.append('file',      file);
-    fd.append('api_key',   sig.api_key);
-    fd.append('timestamp', String(sig.timestamp));
-    fd.append('signature', sig.signature);
-    fd.append('folder',    sig.folder);
-    const endpoint = `https://api.cloudinary.com/v1_1/${sig.cloud_name}/auto/upload`;
-    const cldRes = await fetch(endpoint, {method:'POST', body:fd});
-    const cld = await cldRes.json();
-    console.log('Cloudinary response:', cld);
-    if(cld.error){ throw new Error('Cloudinary: ' + cld.error.message); }
-    if(!cld.secure_url){ throw new Error('No secure_url in response'); }
-    return cld.secure_url;
-  } catch(e) {
-    console.error('Upload failed, using server fallback:', e.message);
-    // Fallback: server upload
-    const fd = new FormData(); fd.append('file', file);
+    fd.append('file', file);
     const res = await fetch(API + '/upload', {method:'POST', body: fd});
     const j = await res.json();
+    if(j.error) throw new Error(j.error);
     return j.url || '';
+  } catch(e) {
+    console.error('Upload failed:', e.message);
+    alert('Upload failed: ' + e.message);
+    return '';
   }
 }
 
@@ -1600,11 +1601,15 @@ async function addPost(){
   if(!currentUser){ alert('Please login first.'); return; }
   const text = byId('postText').value.trim();
   const fileEl = byId('fileUpload');
-  let url = '';
-  if(fileEl.files[0]) url = await uploadFile(fileEl.files[0]);
+  let url = '', mime = '';
+  if(fileEl.files[0]){
+    mime = fileEl.files[0].type;
+    url = await uploadFile(fileEl.files[0]);
+  }
   if(!text && !url) return;
   await fetch(API + '/posts', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
-    author_email: currentUser.email, author_name: currentUser.name, profile_pic: currentUser.profile_pic||'', text, file_url: url
+    author_email: currentUser.email, author_name: currentUser.name,
+    profile_pic: currentUser.profile_pic||'', text, file_url: url, file_mime: mime
   })});
   byId('postText').value=''; fileEl.value=''; byId('fileNameDisplay').textContent='';
   await loadFeed(); await loadProfilePosts(); await loadMonetization();
@@ -1660,7 +1665,9 @@ function createPostElement(p){
 
   if(p.file_url){
     const media = document.createElement('div'); media.className='post-media';
-    const isVideo = p.file_url.endsWith('.mp4')||p.file_url.endsWith('.webm')||p.file_url.includes('/video/');
+    const isVideo = (p.file_mime && p.file_mime.startsWith('video/')) ||
+                    p.file_url.startsWith('data:video/') ||
+                    /\.(mp4|webm|mov|avi|mkv)(\?|$)/i.test(p.file_url);
     if(isVideo){
       const wrap = document.createElement('div'); wrap.className='video-wrap';
       const v = document.createElement('video');
@@ -2015,15 +2022,22 @@ def api_me():
 # ---------- Upload ----------
 @app.route("/api/upload", methods=["POST"])
 def api_upload():
-    """Fallback server-side upload — used only when Cloudinary is not configured."""
     if "file" not in request.files:
         return jsonify({"error": "No file"}), 400
     f = request.files["file"]
     if not f.filename:
         return jsonify({"error": "No filename"}), 400
-    fn = f"{uuid.uuid4().hex}_{f.filename}"
-    f.save(os.path.join(UPLOAD_DIR, fn))
-    return jsonify({"url": f"/uploads/{fn}"})
+    data = f.read()
+    if len(data) > 50 * 1024 * 1024:
+        return jsonify({"error": "File too large (max 50MB)"}), 400
+    import base64
+    mime     = f.mimetype or "application/octet-stream"
+    b64      = base64.b64encode(data).decode("utf-8")
+    media_id = uuid.uuid4().hex
+    mf = MediaFile(id=media_id, mime=mime, data=b64)
+    db.session.add(mf)
+    db.session.commit()
+    return jsonify({"url": f"/media/{media_id}"})
 
 
 @app.route("/api/sign-upload", methods=["POST"])
@@ -2081,6 +2095,7 @@ def api_posts():
         profile_pic=data.get("profile_pic", ""),
         text=data.get("text", ""),
         file_url=data.get("file_url", ""),
+        file_mime=data.get("file_mime", ""),
     )
     db.session.add(post)
     db.session.commit()

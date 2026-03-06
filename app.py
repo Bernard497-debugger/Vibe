@@ -1410,6 +1410,8 @@ body::after {
 
         <div class="monet-section-title">Active Campaigns</div>
         <div id="adsList"></div>
+      </div><!-- /monet tab -->
+
       <!-- Profile Tab -->
       <div id="profile" class="tab">
         <div class="section-header">

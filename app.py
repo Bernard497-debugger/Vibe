@@ -1682,9 +1682,11 @@ function optimizeCldUrl(url, isVideo){
 
 function isVideoUrl(url){
   if(!url) return false;
+  if(url.startsWith('data:video/')) return true;
   return url.includes('/video/upload/') ||
          url.includes('resource_type=video') ||
          /\.(mp4|webm|mov|avi|mkv|ogv)(\?|$|#)/i.test(url);
+};
 }
 
 async function createAd(){

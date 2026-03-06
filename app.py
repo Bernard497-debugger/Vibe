@@ -8,12 +8,7 @@ from flask import Flask, request, jsonify, send_from_directory, session, render_
 
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func
-try:
-    import cloudinary
-    _cloudinary_available = True
-except ImportError:
-    _cloudinary_available = False
-    print("WARNING: cloudinary package not installed", flush=True)
+
 
 # ---------- Config ----------
 APP_DIR   = os.path.dirname(os.path.abspath(__file__))
@@ -25,21 +20,7 @@ app.config["MAX_CONTENT_LENGTH"] = 300 * 1024 * 1024
 app.config["PORT"] = int(os.environ.get("PORT", 5000))
 app.secret_key = os.environ.get("SECRET_KEY", "vibenet_secret_dev")
 
-# ---------- Cloudinary ----------
-_cld_cloud  = os.environ.get("CLOUDINARY_CLOUD_NAME", "")
-_cld_key    = os.environ.get("CLOUDINARY_API_KEY", "")
-_cld_secret = os.environ.get("CLOUDINARY_API_SECRET", "")
-CLOUDINARY_URL = os.environ.get("CLOUDINARY_URL", "")
-if _cld_cloud and _cld_key and _cld_secret:
-    cloudinary.config(cloud_name=_cld_cloud, api_key=_cld_key, api_secret=_cld_secret, secure=True)
-elif CLOUDINARY_URL:
-    cloudinary.config(cloudinary_url=CLOUDINARY_URL)
 
-def _cloudinary_ok():
-    if not _cloudinary_available:
-        return False
-    cfg = cloudinary.config()
-    return bool(cfg.cloud_name and cfg.api_key)
 
 # SQLAlchemy: prefer DATABASE_URL env var (Render PostgreSQL), fall back to SQLite
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
@@ -1672,21 +1653,23 @@ function showUploadProgress(show, label='Uploading...'){
 
 async function uploadFile(file, folder='vibenet/posts'){
   const isPost = folder === 'vibenet/posts';
-  if(isPost) showUploadProgress(true, `Uploading ${file.type.startsWith('video/') ? 'video' : 'image'} (${(file.size/1024/1024).toFixed(1)}MB)...`);
+  const isVideo = file.type.startsWith('video/');
+  if(isVideo && file.size > 20 * 1024 * 1024){
+    alert('Video too large. Max 20MB.');
+    return '';
+  }
+  if(isPost) showUploadProgress(true, `Uploading ${isVideo ? 'video' : 'image'} (${(file.size/1024/1024).toFixed(1)}MB)...`);
   try {
     const fd = new FormData();
     fd.append('file', file);
-    fd.append('folder', folder);
     const res = await fetch(API + '/upload', {method:'POST', body: fd});
     const j = await res.json();
-    console.log('Upload response:', j);
     if(j.error) throw new Error(j.error);
     if(!j.url) throw new Error('No URL returned');
     if(isPost) showUploadProgress(false);
     return j.url;
   } catch(e){
     if(isPost) showUploadProgress(false);
-    console.error('Upload error:', e.message);
     alert('Upload failed: ' + e.message);
     return '';
   }
@@ -1694,12 +1677,7 @@ async function uploadFile(file, folder='vibenet/posts'){
 
 
 function optimizeCldUrl(url, isVideo){
-  if(!url) return url;
-  // Only transform cloudinary URLs, and only if they have the standard upload path
-  if(!url.includes('cloudinary.com') || !url.includes('/upload/')) return url;
-  // Don't double-transform
-  if(url.includes('/upload/q_auto')) return url;
-  return url.replace('/upload/', '/upload/q_auto,f_auto/');
+  return url; // media stored as data URLs, no transform needed
 }
 
 function isVideoUrl(url){
@@ -2196,80 +2174,17 @@ def api_upload():
     f = request.files["file"]
     if not f.filename:
         return jsonify({"error": "No filename"}), 400
-    folder = request.form.get("folder", "vibenet/posts")
-    if _cloudinary_available and _cloudinary_ok():
-        try:
-            import cloudinary.uploader
-            result = cloudinary.uploader.upload(f, folder=folder, resource_type="auto")
-            return jsonify({"url": result["secure_url"]})
-        except Exception as e:
-            return jsonify({"error": f"Cloudinary: {str(e)}"}), 500
-    # Local fallback (dev only)
-    fn = f"{uuid.uuid4().hex}_{f.filename}"
-    f.save(os.path.join(UPLOAD_DIR, fn))
-    return jsonify({"url": f"/uploads/{fn}"})
+    import base64
+    data = f.read()
+    if len(data) > 20 * 1024 * 1024:
+        return jsonify({"error": "File too large (max 20MB)"}), 400
+    mime = f.mimetype or "application/octet-stream"
+    b64  = base64.b64encode(data).decode("utf-8")
+    data_url = f"data:{mime};base64,{b64}"
+    return jsonify({"url": data_url})
 
 
-@app.route("/api/sign-upload", methods=["POST"])
-def api_sign_upload():
-    if not _cloudinary_ok():
-        return jsonify({"error": "Cloudinary not configured"}), 503
-    try:
-        import time
-        import cloudinary.utils
-        cfg       = cloudinary.config()
-        data      = request.get_json() or {}
-        folder    = data.get("folder", "vibenet/posts")
-        timestamp = int(time.time())
-        params_to_sign = {"folder": folder, "timestamp": timestamp}
-        signature = cloudinary.utils.api_sign_request(params_to_sign, cfg.api_secret)
-        return jsonify({
-            "signature":  signature,
-            "timestamp":  timestamp,
-            "api_key":    cfg.api_key,
-            "cloud_name": cfg.cloud_name,
-            "folder":     folder,
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
-
-@app.route("/api/test-cloudinary")
-def api_test_cloudinary():
-    """Quick diagnostic — visit this URL to check Cloudinary config."""
-    cfg = cloudinary.config()
-    return jsonify({
-        "cloudinary_ok":  _cloudinary_ok(),
-        "cloud_name_set": bool(cfg.cloud_name),
-        "api_key_set":    bool(cfg.api_key),
-        "api_secret_set": bool(cfg.api_secret),
-    })
-
-
-# ---------- Posts ----------
-@app.route("/api/posts", methods=["GET", "POST"])
-def api_posts():
-    if request.method == "GET":
-        posts = Post.query.order_by(Post.id.desc()).all()
-        # Build a verified lookup map
-        emails = list({p.author_email for p in posts})
-        verified_map = {}
-        if emails:
-            users = User.query.filter(User.email.in_(emails)).all()
-            verified_map = {u.email: bool(u.verified) for u in users}
-        return jsonify([p.to_dict(author_verified=verified_map.get(p.author_email, False)) for p in posts])
-
-    data = request.get_json() or {}
-    post = Post(
-        author_email=data.get("author_email"),
-        author_name=data.get("author_name"),
-        profile_pic=data.get("profile_pic", ""),
-        text=data.get("text", ""),
-        file_url=data.get("file_url", ""),
-    )
-    db.session.add(post)
-    db.session.commit()
-    return jsonify(post.to_dict())
 
 
 @app.route("/api/posts/<int:post_id>", methods=["DELETE", "PATCH"])

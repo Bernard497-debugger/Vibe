@@ -6,8 +6,9 @@ import json as _json
 from flask import Flask, request, jsonify, send_from_directory, session, render_template_string
 
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import func
+from sqlalchemy import func, text
 import cloudinary
+import cloudinary.uploader
 
 # ---------- Config ----------
 APP_DIR   = os.path.dirname(os.path.abspath(__file__))
@@ -202,12 +203,12 @@ with app.app_context():
     ]
     for sql in migrations:
         try:
-            db.session.execute(sql)
+            db.session.execute(text(sql))
             db.session.commit()
         except Exception:
             db.session.rollback()
 
-ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@vibenet.local")
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "botsile55@gmail.com")
 
 def require_admin():
     return session.get("user_email") == ADMIN_EMAIL
@@ -312,7 +313,6 @@ def api_post_create():
     if file:
         try:
             if _cloudinary_ok():
-                import cloudinary.uploader
                 result = cloudinary.uploader.upload(file, folder="vibenet_posts")
                 file_url = result.get("secure_url", "")
             else:

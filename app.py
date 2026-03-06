@@ -1577,7 +1577,7 @@ async function signup(){
   }
 }
 
-async function login(){
+async async function login(){
   const email = byId('loginEmail').value.trim().toLowerCase();
   const password = byId('loginPassword').value;
   if(!email||!password){ alert('Please fill in your login details.'); return; }

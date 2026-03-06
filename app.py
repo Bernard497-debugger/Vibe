@@ -217,6 +217,24 @@ class Comment(db.Model):
         }
 
 
+class Report(db.Model):
+    __tablename__ = "reports"
+    id           = db.Column(db.Integer, primary_key=True)
+    reporter_email = db.Column(db.Text, nullable=False)
+    target_type  = db.Column(db.Text, nullable=False)  # 'post' | 'comment' | 'user'
+    target_id    = db.Column(db.Integer, nullable=False)
+    reason       = db.Column(db.Text, nullable=False)
+    status       = db.Column(db.Text, default="pending")  # pending | reviewed | dismissed
+    created_at   = db.Column(db.Text, default=lambda: now_ts())
+
+    def to_dict(self):
+        return {
+            "id": self.id, "reporter_email": self.reporter_email,
+            "target_type": self.target_type, "target_id": self.target_id,
+            "reason": self.reason, "status": self.status, "created_at": self.created_at,
+        }
+
+
 class VerifiedRequest(db.Model):
     __tablename__ = "verified_requests"
     id         = db.Column(db.Integer, primary_key=True)
@@ -1487,6 +1505,26 @@ body::after {
 
   </div><!-- /app-layout -->
 
+<!-- Report Modal -->
+<div id="reportModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeReportModal()">
+  <div class="modal-box">
+    <div class="modal-title">⚑ Report Content</div>
+    <div style="font-size:13px;color:#8899b4;margin-bottom:14px">Select a reason for your report:</div>
+    <div id="reportReasons" style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#c8d8f0"><input type="radio" name="reportReason" value="Spam"> Spam</label>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#c8d8f0"><input type="radio" name="reportReason" value="Nudity or sexual content"> Nudity or sexual content</label>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#c8d8f0"><input type="radio" name="reportReason" value="Hate speech or harassment"> Hate speech or harassment</label>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#c8d8f0"><input type="radio" name="reportReason" value="Violence or dangerous content"> Violence or dangerous content</label>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#c8d8f0"><input type="radio" name="reportReason" value="Misinformation"> Misinformation</label>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#c8d8f0"><input type="radio" name="reportReason" value="Other"> Other</label>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-ghost" onclick="closeReportModal()">Cancel</button>
+      <button class="btn-primary" onclick="submitReport()" style="background:#f06a4d">Submit Report</button>
+    </div>
+  </div>
+</div>
+
 <!-- Edit Post Modal -->
 <div id="editModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeEditModal()">
   <div class="modal-box">
@@ -1741,7 +1779,13 @@ function createPostElement(p){
       const jj = await r.json();
       if(jj.following){ fb.classList.add('active'); fb.textContent='✓ Following'; }
     })();
-    header.append(fb);
+    // Report button
+    const rpBtn = document.createElement('button');
+    rpBtn.style.cssText = 'background:none;border:none;color:#5a6a85;font-size:13px;cursor:pointer;padding:4px 6px;margin-left:4px';
+    rpBtn.title = 'Report post';
+    rpBtn.textContent = '⚑';
+    rpBtn.onclick = ()=> openReportModal('post', p.id);
+    header.append(fb, rpBtn);
   }
 
   div.append(header);
@@ -2031,6 +2075,36 @@ async function loadAds(){
   });
 }
 
+
+// Report modal
+let _reportTarget = null;
+function openReportModal(type, id){
+  _reportTarget = {type, id};
+  document.querySelectorAll('input[name="reportReason"]').forEach(r=>r.checked=false);
+  byId('reportModal').style.display = 'flex';
+}
+function closeReportModal(){
+  byId('reportModal').style.display = 'none';
+  _reportTarget = null;
+}
+async function submitReport(){
+  if(!currentUser || !_reportTarget) return;
+  const reason = document.querySelector('input[name="reportReason"]:checked');
+  if(!reason){ alert('Please select a reason.'); return; }
+  const res = await fetch(API+'/report', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      reporter_email: currentUser.email,
+      target_type: _reportTarget.type,
+      target_id: _reportTarget.id,
+      reason: reason.value
+    })
+  });
+  const j = await res.json();
+  closeReportModal();
+  if(j.success) alert('✅ ' + j.message);
+  else alert('❌ ' + (j.error || 'Failed to submit report'));
+}
 
 // Edit modal
 let _editPostId = null;
@@ -2627,6 +2701,26 @@ def api_verified_request_status(email):
     return jsonify({"status": vr.status, "created_at": vr.created_at})
 
 
+# ---------- Reports ----------
+@app.route("/api/report", methods=["POST"])
+def api_report():
+    data   = request.get_json() or {}
+    email  = data.get("reporter_email", "")
+    ttype  = data.get("target_type", "")
+    tid    = data.get("target_id")
+    reason = data.get("reason", "").strip()
+    if not email or not ttype or not tid or not reason:
+        return jsonify({"error": "Missing fields"}), 400
+    # Prevent duplicate reports
+    existing = Report.query.filter_by(reporter_email=email, target_type=ttype, target_id=tid).first()
+    if existing:
+        return jsonify({"error": "You already reported this"}), 400
+    r = Report(reporter_email=email, target_type=ttype, target_id=tid, reason=reason)
+    db.session.add(r)
+    db.session.commit()
+    return jsonify({"success": True, "message": "Report submitted. Our team will review it."})
+
+
 # ---------- Payout Requests ----------
 @app.route("/api/payout", methods=["POST"])
 def api_payout_request():
@@ -2692,6 +2786,7 @@ def _build_admin_page():
     total_ads       = Ad.query.count()
     pending_ads     = Ad.query.filter_by(approved=0).count()
     pending_payouts = PayoutRequest.query.filter_by(status="pending").count()
+    pending_reports = Report.query.filter_by(status="pending").count()
     total_earnings  = db.session.query(func.sum(User.earnings)).scalar() or 0
 
     users = User.query.order_by(User.id.desc()).all()
@@ -2785,6 +2880,40 @@ def _build_admin_page():
           </td>
         </tr>"""
 
+    reports = Report.query.order_by(Report.id.desc()).all()
+    report_rows = ""
+    for r in reports:
+        # Get context snippet
+        context = "—"
+        try:
+            if r.target_type == "post":
+                p = Post.query.get(r.target_id)
+                context = (p.text or "")[:40] + "..." if p and p.text else "Media post"
+            elif r.target_type == "comment":
+                c = Comment.query.get(r.target_id)
+                context = (c.text or "")[:40] + "..." if c else "Deleted"
+            elif r.target_type == "user":
+                u = User.query.get(r.target_id)
+                context = u.email if u else "Deleted"
+        except Exception:
+            pass
+        report_rows += f"""<tr style="border-bottom:1px solid rgba(255,255,255,0.05)">
+          <td style="padding:10px 8px">{r.id}</td>
+          <td style="padding:10px 8px">{r.reporter_email}</td>
+          <td style="padding:10px 8px">{r.target_type} #{r.target_id}</td>
+          <td style="padding:10px 8px;max-width:200px;overflow:hidden;text-overflow:ellipsis">{context}</td>
+          <td style="padding:10px 8px">{r.reason}</td>
+          <td style="padding:10px 8px">{r.created_at or '—'}</td>
+          <td style="padding:10px 8px">{r.status}</td>
+          <td style="padding:10px 8px;display:flex;gap:6px">
+            <form method="post" action="/api/admin/report/{r.id}/action" style="display:inline">
+              <input type="hidden" name="action" value="dismiss">
+              <button style="{BTN_GREY}">Dismiss</button>
+            </form>
+            {'<form method="post" action="/api/admin/report/'+str(r.id)+'/action" style="display:inline"><input type="hidden" name="action" value="remove"><button style="'+BTN_RED+'">🗑 Remove</button></form>' if r.target_type in ['post','comment'] else ''}
+          </td>
+        </tr>"""
+
     TH = "padding:10px 8px;text-align:left;color:#4DF0C0;font-size:12px;border-bottom:1px solid rgba(77,240,192,0.2)"
     TABLE = "width:100%;border-collapse:collapse;font-size:13px;color:#c8d8f0"
 
@@ -2806,6 +2935,7 @@ def _build_admin_page():
       <div class="stat"><div class="stat-val">{total_posts}</div><div class="stat-label">Posts</div></div>
       <div class="stat"><div class="stat-val">{pending_ads}</div><div class="stat-label">Pending Ads</div></div>
       <div class="stat"><div class="stat-val">{pending_payouts}</div><div class="stat-label">Pending Payouts</div></div>
+      <div class="stat"><div class="stat-val" style="color:{'#f06a4d' if pending_reports > 0 else '#4DF0C0'}">{pending_reports}</div><div class="stat-label">Pending Reports</div></div>
       <div class="stat"><div class="stat-val">P{total_earnings:.2f}</div><div class="stat-label">Total Earnings</div></div>
     </div>
 
@@ -2829,6 +2959,12 @@ def _build_admin_page():
       <tr><th style="{TH}">ID</th><th style="{TH}">Name</th><th style="{TH}">Email</th>
       <th style="{TH}">Status</th><th style="{TH}">Date</th><th style="{TH}">Action</th></tr>
       {vreq_rows}</table></div></div>
+
+    <div class="card"><div class="section-title">⚑ Content Moderation Queue</div><div class="overflow"><table style="{TABLE}">
+      <tr><th style="{TH}">ID</th><th style="{TH}">Reporter</th><th style="{TH}">Target</th>
+      <th style="{TH}">Content</th><th style="{TH}">Reason</th><th style="{TH}">Date</th>
+      <th style="{TH}">Status</th><th style="{TH}">Actions</th></tr>
+      {report_rows}</table></div></div>
     </body></html>"""
 
 @app.route("/api/admin/user/ban", methods=["POST"])
@@ -2888,6 +3024,33 @@ def api_admin_mark_paid(payout_id):
     p.status = "paid"
     db.session.commit()
     return redirect("/admin") if request.form else jsonify({"success":True})
+
+@app.route("/api/admin/report/<int:report_id>/action", methods=["POST"])
+def api_admin_report_action(report_id):
+    if not require_admin(): return jsonify({"error":"Unauthorized"}), 403
+    action = request.form.get("action") or (request.get_json() or {}).get("action","dismiss")
+    r = Report.query.get(report_id)
+    if not r: return jsonify({"error":"Not found"}), 404
+    if action == "dismiss":
+        r.status = "dismissed"
+        db.session.commit()
+    elif action == "remove":
+        r.status = "reviewed"
+        if r.target_type == "post":
+            post = Post.query.get(r.target_id)
+            if post:
+                UserReaction.query.filter_by(post_id=r.target_id).delete()
+                Comment.query.filter_by(post_id=r.target_id).delete()
+                db.session.delete(post)
+        elif r.target_type == "comment":
+            c = Comment.query.get(r.target_id)
+            if c:
+                post = Post.query.get(c.post_id)
+                if post: post.comments_count = max(0, (post.comments_count or 1) - 1)
+                db.session.delete(c)
+        db.session.commit()
+    return redirect("/admin") if request.form else jsonify({"success":True})
+
 
 @app.route("/api/admin/verified/<int:vreq_id>/approve", methods=["POST"])
 def api_admin_approve_verified(vreq_id):

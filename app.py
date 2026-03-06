@@ -1809,32 +1809,7 @@ function createAdCard(ad){
 }
 
 function observeVideos(){
-  if(window._vn_obs) window._vn_obs.disconnect();
-  let currentlyPlaying = null;
-
-  const obs = new IntersectionObserver(entries=>{
-    entries.forEach(entry=>{
-      const v = entry.target;
-      const ratio = entry.intersectionRatio;
-
-      if(ratio >= 0.6){
-        // Autoplay: pause anything else first
-        if(currentlyPlaying && currentlyPlaying !== v){
-          currentlyPlaying.pause();
-        }
-        if(v.paused){
-          v.muted = true;
-          v.play().then(()=>{ currentlyPlaying = v; }).catch(()=>{});
-        }
-      } else if(ratio < 0.25){
-        if(!v.paused){ v.pause(); }
-        if(currentlyPlaying === v) currentlyPlaying = null;
-      }
-    });
-  }, { threshold: [0, 0.25, 0.5, 0.6, 0.75, 1.0] });
-
-  document.querySelectorAll('video').forEach(v=>obs.observe(v));
-  window._vn_obs = obs;
+  // Autoplay disabled — users press play manually
 }
 
 async function loadNotifications(markSeen=false){

@@ -1,4 +1,4 @@
-# app.py - VibeNet  (SQLAlchemy ORM  |  SQLite locally  |  PostgreSQL on Render)
+# app.py - VibeNet  (SQLAlchemy ORM  |  SQLite locally  |  PostgreSQL on Render  |  Supabase Storage)
 import os
 import uuid
 import datetime
@@ -7,19 +7,15 @@ from flask import Flask, request, jsonify, send_from_directory, session, render_
 
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func
-import cloudinary
-import cloudinary.uploader
+import requests
 
-# ---------- Cloudinary Config ----------
-cloudinary.config(
-    cloud_name  = os.environ.get("CLOUDINARY_CLOUD_NAME", ""),
-    api_key     = os.environ.get("CLOUDINARY_API_KEY", ""),
-    api_secret  = os.environ.get("CLOUDINARY_API_SECRET", ""),
-)
+# ---------- Supabase Storage Config ----------
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+SUPABASE_BUCKET = os.environ.get("SUPABASE_BUCKET", "vibenet")
 
-def _cloudinary_ok():
-    cfg = cloudinary.config()
-    return bool(cfg.cloud_name and cfg.api_key and cfg.api_secret)
+def _supabase_ok():
+    return bool(SUPABASE_URL and SUPABASE_KEY)
 
 # ---------- Config ----------
 APP_DIR   = os.path.dirname(os.path.abspath(__file__))
@@ -30,20 +26,6 @@ app = Flask(__name__, static_folder=None)
 app.config["MAX_CONTENT_LENGTH"] = 300 * 1024 * 1024
 app.config["PORT"] = int(os.environ.get("PORT", 5000))
 app.secret_key = os.environ.get("SECRET_KEY", "vibenet_secret_dev")
-
-# ---------- Cloudinary ----------
-_cld_cloud  = os.environ.get("CLOUDINARY_CLOUD_NAME", "")
-_cld_key    = os.environ.get("CLOUDINARY_API_KEY", "")
-_cld_secret = os.environ.get("CLOUDINARY_API_SECRET", "")
-CLOUDINARY_URL = os.environ.get("CLOUDINARY_URL", "")
-if _cld_cloud and _cld_key and _cld_secret:
-    cloudinary.config(cloud_name=_cld_cloud, api_key=_cld_key, api_secret=_cld_secret, secure=True)
-elif CLOUDINARY_URL:
-    cloudinary.config(cloudinary_url=CLOUDINARY_URL)
-
-def _cloudinary_ok():
-    cfg = cloudinary.config()
-    return bool(cfg.cloud_name and cfg.api_key)
 
 # SQLAlchemy: prefer DATABASE_URL env var (Render PostgreSQL), fall back to SQLite
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
@@ -2701,31 +2683,40 @@ def api_upload():
         if len(data) > 100 * 1024 * 1024:
             return jsonify({"error": "File too large (max 100MB)"}), 400
         mime = f.mimetype or "application/octet-stream"
-        is_video = mime.startswith("video/")
 
-        # Try Cloudinary first (preferred method)
-        if _cloudinary_ok():
+        # Try Supabase Storage first (preferred)
+        if _supabase_ok():
             try:
-                import io
-                result = cloudinary.uploader.upload(
-                    io.BytesIO(data),
-                    folder        = "vibenet/posts",
-                    resource_type = "video" if is_video else "image",
-                    quality       = "auto",
-                    fetch_format  = "auto",
-                    timeout       = 120,  # 2-minute timeout for large files
-                )
-                return jsonify({"url": result.get("secure_url", "")})
+                file_id = uuid.uuid4().hex
+                file_ext = os.path.splitext(f.filename)[1] or ".bin"
+                file_path = f"posts/{file_id}{file_ext}"
+                
+                # Upload to Supabase Storage
+                headers = {
+                    "Authorization": f"Bearer {SUPABASE_KEY}",
+                    "Content-Type": mime,
+                }
+                url = f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{file_path}"
+                
+                response = requests.post(url, data=data, headers=headers, timeout=120)
+                
+                if response.status_code in (200, 201):
+                    # Return public URL
+                    public_url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{file_path}"
+                    return jsonify({"url": public_url})
+                else:
+                    print(f"Supabase upload failed: {response.status_code} - {response.text}")
+                    # Fall back to DB for small files only
+                    if len(data) > 10 * 1024 * 1024:
+                        return jsonify({"error": f"Upload failed: {response.text[:80]}"}), 503
+                    print("Falling back to DB storage")
             except Exception as e:
-                print(f"Cloudinary upload failed: {e}")
-                # Don't fall back to DB for large files — just return error
-                if len(data) > 10 * 1024 * 1024:  # >10MB
-                    return jsonify({"error": f"Cloudinary upload failed and file is too large for fallback. Please try again or configure Cloudinary properly. Error: {str(e)[:100]}"}), 503
-                # Only fall back to DB for small files
-                print("Falling back to local DB storage for small file")
+                print(f"Supabase upload error: {e}")
+                if len(data) > 10 * 1024 * 1024:
+                    return jsonify({"error": f"Supabase upload failed: {str(e)[:80]}"}), 503
 
         # Fallback: store as base64 in DB (only for small files)
-        if len(data) <= 10 * 1024 * 1024:  # Only if <=10MB
+        if len(data) <= 10 * 1024 * 1024:
             try:
                 import base64
                 b64      = base64.b64encode(data).decode("utf-8")
@@ -2736,11 +2727,10 @@ def api_upload():
                 return jsonify({"url": f"/media/{media_id}"})
             except Exception as db_err:
                 print(f"DB fallback failed: {db_err}")
-                # Rollback to avoid session corruption
                 db.session.rollback()
-                return jsonify({"error": f"Upload service temporarily unavailable. Please try again. ({str(db_err)[:80]}...)"}), 503
+                return jsonify({"error": f"Upload service temporarily unavailable. ({str(db_err)[:80]}...)"}), 503
         else:
-            return jsonify({"error": "File too large and Cloudinary not available. Configure Cloudinary or use smaller files."}), 503
+            return jsonify({"error": "File too large and Supabase not available. Configure Supabase or use smaller files."}), 503
 
     except Exception as e:
         print(f"Upload error: {e}")
@@ -2749,44 +2739,14 @@ def api_upload():
         return jsonify({"error": str(e)[:150]}), 500
 
 
-@app.route("/api/sign-upload", methods=["POST"])
-def api_sign_upload():
-    """Signs a Cloudinary upload so the browser can upload directly."""
-    try:
-        if not _cloudinary_ok():
-            return jsonify({"error": "Cloudinary not configured — set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET"}), 503
-        import time, hashlib
-        data      = request.get_json() or {}
-        folder    = data.get("folder", "vibenet/posts")
-        timestamp = int(time.time())
-        # Params MUST be sorted alphabetically — Cloudinary is strict about this
-        params    = {"folder": folder, "timestamp": timestamp}
-        param_str = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
-        to_sign   = param_str + cloudinary.config().api_secret
-        signature = hashlib.sha1(to_sign.encode("utf-8")).hexdigest()
-        return jsonify({
-            "signature":  signature,
-            "timestamp":  timestamp,
-            "api_key":    cloudinary.config().api_key,
-            "cloud_name": cloudinary.config().cloud_name,
-            "folder":     folder,
-        })
-    except Exception as e:
-        print(f"Sign upload error: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/test-cloudinary")
-def api_test_cloudinary():
-    """Quick diagnostic — visit this URL to check Cloudinary config."""
-    cfg = cloudinary.config()
+@app.route("/api/test-supabase", methods=["GET"])
+def api_test_supabase():
+    """Quick diagnostic for Supabase Storage config."""
     return jsonify({
-        "cloudinary_ok":  _cloudinary_ok(),
-        "cloud_name_set": bool(cfg.cloud_name),
-        "api_key_set":    bool(cfg.api_key),
-        "api_secret_set": bool(cfg.api_secret),
+        "supabase_ok": _supabase_ok(),
+        "supabase_url_set": bool(SUPABASE_URL),
+        "supabase_key_set": bool(SUPABASE_KEY),
+        "bucket": SUPABASE_BUCKET,
     })
 
 

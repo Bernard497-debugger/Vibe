@@ -65,6 +65,15 @@ os.makedirs(os.path.join(APP_DIR, "data"), exist_ok=True)
 
 db = SQLAlchemy(app)
 
+# ---------- Global Error Handler ----------
+@app.errorhandler(Exception)
+def handle_error(error):
+    """Catch all unhandled exceptions and return JSON"""
+    import traceback
+    print(f"Unhandled error: {error}")
+    traceback.print_exc()
+    return jsonify({"error": str(error), "type": type(error).__name__}), 500
+
 # ---------- Utilities ----------
 def now_ts():
     return datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
@@ -2677,63 +2686,75 @@ def api_me():
 # ---------- Upload ----------
 @app.route("/api/upload", methods=["POST"])
 def api_upload():
-    if "file" not in request.files:
-        return jsonify({"error": "No file"}), 400
-    f = request.files["file"]
-    if not f.filename:
-        return jsonify({"error": "No filename"}), 400
-    data = f.read()
-    if len(data) > 100 * 1024 * 1024:
-        return jsonify({"error": "File too large (max 100MB)"}), 400
-    mime = f.mimetype or "application/octet-stream"
-    is_video = mime.startswith("video/")
+    try:
+        if "file" not in request.files:
+            return jsonify({"error": "No file"}), 400
+        f = request.files["file"]
+        if not f.filename:
+            return jsonify({"error": "No filename"}), 400
+        data = f.read()
+        if len(data) > 100 * 1024 * 1024:
+            return jsonify({"error": "File too large (max 100MB)"}), 400
+        mime = f.mimetype or "application/octet-stream"
+        is_video = mime.startswith("video/")
 
-    # Try Cloudinary first
-    if _cloudinary_ok():
-        try:
-            import io
-            result = cloudinary.uploader.upload(
-                io.BytesIO(data),
-                folder        = "vibenet/posts",
-                resource_type = "video" if is_video else "image",
-                quality       = "auto",
-                fetch_format  = "auto",
-            )
-            return jsonify({"url": result.get("secure_url", "")})
-        except Exception as e:
-            print(f"Cloudinary upload failed: {e}, falling back to DB")
+        # Try Cloudinary first
+        if _cloudinary_ok():
+            try:
+                import io
+                result = cloudinary.uploader.upload(
+                    io.BytesIO(data),
+                    folder        = "vibenet/posts",
+                    resource_type = "video" if is_video else "image",
+                    quality       = "auto",
+                    fetch_format  = "auto",
+                )
+                return jsonify({"url": result.get("secure_url", "")})
+            except Exception as e:
+                print(f"Cloudinary upload failed: {e}, falling back to DB")
 
-    # Fallback: store as base64 in DB
-    import base64
-    b64      = base64.b64encode(data).decode("utf-8")
-    media_id = uuid.uuid4().hex
-    mf = MediaFile(id=media_id, mime=mime, data=b64)
-    db.session.add(mf)
-    db.session.commit()
-    return jsonify({"url": f"/media/{media_id}"})
+        # Fallback: store as base64 in DB
+        import base64
+        b64      = base64.b64encode(data).decode("utf-8")
+        media_id = uuid.uuid4().hex
+        mf = MediaFile(id=media_id, mime=mime, data=b64)
+        db.session.add(mf)
+        db.session.commit()
+        return jsonify({"url": f"/media/{media_id}"})
+    except Exception as e:
+        print(f"Upload error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/sign-upload", methods=["POST"])
 def api_sign_upload():
     """Signs a Cloudinary upload so the browser can upload directly."""
-    if not _cloudinary_ok():
-        return jsonify({"error": "Cloudinary not configured — set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET"}), 503
-    import time, hashlib
-    data      = request.get_json() or {}
-    folder    = data.get("folder", "vibenet/posts")
-    timestamp = int(time.time())
-    # Params MUST be sorted alphabetically — Cloudinary is strict about this
-    params    = {"folder": folder, "timestamp": timestamp}
-    param_str = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
-    to_sign   = param_str + cloudinary.config().api_secret
-    signature = hashlib.sha1(to_sign.encode("utf-8")).hexdigest()
-    return jsonify({
-        "signature":  signature,
-        "timestamp":  timestamp,
-        "api_key":    cloudinary.config().api_key,
-        "cloud_name": cloudinary.config().cloud_name,
-        "folder":     folder,
-    })
+    try:
+        if not _cloudinary_ok():
+            return jsonify({"error": "Cloudinary not configured — set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET"}), 503
+        import time, hashlib
+        data      = request.get_json() or {}
+        folder    = data.get("folder", "vibenet/posts")
+        timestamp = int(time.time())
+        # Params MUST be sorted alphabetically — Cloudinary is strict about this
+        params    = {"folder": folder, "timestamp": timestamp}
+        param_str = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+        to_sign   = param_str + cloudinary.config().api_secret
+        signature = hashlib.sha1(to_sign.encode("utf-8")).hexdigest()
+        return jsonify({
+            "signature":  signature,
+            "timestamp":  timestamp,
+            "api_key":    cloudinary.config().api_key,
+            "cloud_name": cloudinary.config().cloud_name,
+            "folder":     folder,
+        })
+    except Exception as e:
+        print(f"Sign upload error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/test-cloudinary")

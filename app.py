@@ -1989,7 +1989,7 @@ async function addPost(){
     profile_pic: currentUser.profile_pic||'', text, file_url: url, file_mime: mime
   })});
   byId('postText').value=''; fileEl.value=''; byId('fileNameDisplay').textContent='';
-  await loadFeed(); await loadProfilePosts(); await loadMonetization();
+  await loadFeed(true); await loadProfilePosts(); await loadMonetization();
 }
 
 function createPostElement(p){
@@ -2054,23 +2054,36 @@ function createPostElement(p){
     if(isVideo){
       const wrap = document.createElement('div'); wrap.className='video-wrap';
       const v = document.createElement('video');
-      v.src = optimizeCldUrl(p.file_url, true); v.controls = true; v.muted = true; v.loop = false;
+      v.dataset.src = optimizeCldUrl(p.file_url, true);
+      v.controls = true; v.muted = true; v.loop = false;
       v.setAttribute('playsinline','');
       v.setAttribute('preload', 'metadata');
+      v.style.background = '#0d1117';
 
-      // Thumbnail: capture first frame as poster
-      const canvas = document.createElement('canvas');
-      v.addEventListener('loadedmetadata', ()=>{ v.currentTime = 0.05; });
-      v.addEventListener('seeked', ()=>{
-        if(v.dataset.thumbDone) return;
-        v.dataset.thumbDone = '1';
-        try {
-          canvas.width  = v.videoWidth  || 640;
-          canvas.height = v.videoHeight || 360;
-          canvas.getContext('2d').drawImage(v, 0, 0, canvas.width, canvas.height);
-          v.poster = canvas.toDataURL('image/jpeg', 0.7);
-        } catch(e) {}
-      }, { once: true });
+      // Lazy load: set src when near viewport
+      const vObs = new IntersectionObserver(entries => {
+        entries.forEach(e => {
+          if(e.isIntersecting && v.dataset.src){
+            v.src = v.dataset.src;
+            delete v.dataset.src;
+            vObs.disconnect();
+            // Thumbnail after src loads
+            v.addEventListener('loadedmetadata', ()=>{ v.currentTime = 0.05; });
+            v.addEventListener('seeked', ()=>{
+              if(v.dataset.thumbDone) return;
+              v.dataset.thumbDone = '1';
+              try {
+                const canvas = document.createElement('canvas');
+                canvas.width = v.videoWidth || 640;
+                canvas.height = v.videoHeight || 360;
+                canvas.getContext('2d').drawImage(v, 0, 0, canvas.width, canvas.height);
+                v.poster = canvas.toDataURL('image/jpeg', 0.7);
+              } catch(e){}
+            }, { once: true });
+          }
+        });
+      }, { rootMargin: '300px' });
+      vObs.observe(v);
 
       const hint = document.createElement('div'); hint.className='play-hint';
       hint.innerHTML='<span>▶</span>';
@@ -2137,28 +2150,76 @@ function createPostElement(p){
   return div;
 }
 
-async function loadFeed(){
-  const [postsRes, adsRes] = await Promise.all([
-    fetch(API+'/posts'),
-    fetch(API+'/ads')
-  ]);
-  const list = await postsRes.json();
-  const ads  = await adsRes.json();
-  const feed = byId('feedList'); feed.innerHTML='';
-  if(!list.length && !ads.length){
-    feed.innerHTML='<div class="empty-state"><div class="empty-icon">📭</div><p>No posts yet. Be the first to share something!</p></div>';
+let _feedPage = 1;
+let _feedHasMore = false;
+let _feedAds = [];
+let _feedAdIndex = 0;
+let _feedLoading = false;
+
+async function loadFeed(reset=true){
+  if(_feedLoading) return;
+  _feedLoading = true;
+
+  if(reset){
+    _feedPage = 1;
+    _feedAdIndex = 0;
+    const feed = byId('feedList');
+    feed.innerHTML = '<div style="text-align:center;padding:32px;color:#5a6a85;font-size:13px">⏳ Loading...</div>';
+    const adsRes = await fetch(API+'/ads');
+    _feedAds = await adsRes.json();
+  }
+
+  const postsRes = await fetch(API+`/posts?page=${_feedPage}&limit=10`);
+  const data = await postsRes.json();
+  const list = data.posts || [];
+  _feedHasMore = data.has_more || false;
+
+  const feed = byId('feedList');
+  if(reset) feed.innerHTML = '';
+
+  const oldBtn = byId('loadMoreBtn');
+  if(oldBtn) oldBtn.remove();
+
+  if(!list.length && _feedPage === 1){
+    feed.innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div><p>No posts yet. Be the first to share something!</p></div>';
+    _feedLoading = false;
     return;
   }
-  // Inject ads every 5 posts, cycling through all approved ads
-  let adIndex = 0;
+
   list.forEach((p, i) => {
     feed.appendChild(createPostElement(p));
-    if(ads.length && (i+1) % 5 === 0){
-      feed.appendChild(createAdCard(ads[adIndex++ % ads.length]));
+    if(_feedAds.length && (i+1) % 5 === 0){
+      feed.appendChild(createAdCard(_feedAds[_feedAdIndex++ % _feedAds.length]));
     }
   });
-  observeVideos();
+
+  // Lazy load videos — only load src when near viewport
+  feed.querySelectorAll('video[data-src]').forEach(v => {
+    const obs = new IntersectionObserver(entries => {
+      entries.forEach(e => {
+        if(e.isIntersecting){ v.src = v.dataset.src; delete v.dataset.src; obs.disconnect(); }
+      });
+    }, { rootMargin: '200px' });
+    obs.observe(v);
+  });
+
+  if(_feedHasMore){
+    const btn = document.createElement('button');
+    btn.id = 'loadMoreBtn';
+    btn.textContent = 'Load more posts';
+    btn.style.cssText = 'display:block;width:100%;padding:14px;margin:12px 0 24px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:12px;color:#8899b4;font-size:14px;font-weight:600;cursor:pointer';
+    btn.onclick = async () => {
+      _feedPage++;
+      btn.textContent = '⏳ Loading...';
+      btn.disabled = true;
+      await loadFeed(false);
+    };
+    feed.appendChild(btn);
+  }
+
+  _feedLoading = false;
 }
+
 
 function createAdCard(ad){
   const waNumber = (ad.whatsapp_number||'').replace(/\D/g,'');
@@ -2526,7 +2587,7 @@ async function deleteComment(commentId, postId){
   await loadComments(postId);
 }
 
-async function refreshAll(){ await loadFeed(); await loadNotifications(); await loadProfilePosts(); await loadMonetization(); await loadAds(); }
+async function refreshAll(){ await loadFeed(true); await loadNotifications(); await loadProfilePosts(); await loadMonetization(); await loadAds(); }
 </script>
 
 <div style="text-align:center;padding:32px 16px 48px;border-top:1px solid rgba(255,255,255,0.05);margin-top:24px">
@@ -2661,14 +2722,22 @@ def api_test_cloudinary():
 @app.route("/api/posts", methods=["GET", "POST"])
 def api_posts():
     if request.method == "GET":
-        posts = Post.query.order_by(Post.id.desc()).all()
+        page  = int(request.args.get("page", 1))
+        limit = int(request.args.get("limit", 10))
+        offset = (page - 1) * limit
+        total = Post.query.count()
+        posts = Post.query.order_by(Post.id.desc()).offset(offset).limit(limit).all()
         # Build a verified lookup map
         emails = list({p.author_email for p in posts})
         verified_map = {}
         if emails:
             users = User.query.filter(User.email.in_(emails)).all()
             verified_map = {u.email: bool(u.verified) for u in users}
-        return jsonify([p.to_dict(author_verified=verified_map.get(p.author_email, False)) for p in posts])
+        return jsonify({
+            "posts": [p.to_dict(author_verified=verified_map.get(p.author_email, False)) for p in posts],
+            "page": page,
+            "has_more": (offset + limit) < total
+        })
 
     data = request.get_json() or {}
     post = Post(

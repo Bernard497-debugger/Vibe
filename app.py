@@ -56,9 +56,14 @@ app.config["SQLALCHEMY_DATABASE_URI"] = (
 )
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
-    "pool_recycle": 280,
-    "pool_pre_ping": True,
-    "connect_args": {"connect_timeout": 10} if not os.environ.get("DATABASE_URL", "").startswith("sqlite") else {},
+    "pool_size": 5,
+    "max_overflow": 10,
+    "pool_recycle": 300,  # Recycle connections every 5 minutes
+    "pool_pre_ping": True,  # Test connection before using
+    "connect_args": {
+        "connect_timeout": 30,
+        "application_name": "vibenet_app",
+    } if not DATABASE_URL.startswith("sqlite") else {},
 }
 
 os.makedirs(os.path.join(APP_DIR, "data"), exist_ok=True)
@@ -2698,7 +2703,7 @@ def api_upload():
         mime = f.mimetype or "application/octet-stream"
         is_video = mime.startswith("video/")
 
-        # Try Cloudinary first
+        # Try Cloudinary first (preferred method)
         if _cloudinary_ok():
             try:
                 import io
@@ -2708,24 +2713,40 @@ def api_upload():
                     resource_type = "video" if is_video else "image",
                     quality       = "auto",
                     fetch_format  = "auto",
+                    timeout       = 120,  # 2-minute timeout for large files
                 )
                 return jsonify({"url": result.get("secure_url", "")})
             except Exception as e:
-                print(f"Cloudinary upload failed: {e}, falling back to DB")
+                print(f"Cloudinary upload failed: {e}")
+                # Don't fall back to DB for large files — just return error
+                if len(data) > 10 * 1024 * 1024:  # >10MB
+                    return jsonify({"error": f"Cloudinary upload failed and file is too large for fallback. Please try again or configure Cloudinary properly. Error: {str(e)[:100]}"}), 503
+                # Only fall back to DB for small files
+                print("Falling back to local DB storage for small file")
 
-        # Fallback: store as base64 in DB
-        import base64
-        b64      = base64.b64encode(data).decode("utf-8")
-        media_id = uuid.uuid4().hex
-        mf = MediaFile(id=media_id, mime=mime, data=b64)
-        db.session.add(mf)
-        db.session.commit()
-        return jsonify({"url": f"/media/{media_id}"})
+        # Fallback: store as base64 in DB (only for small files)
+        if len(data) <= 10 * 1024 * 1024:  # Only if <=10MB
+            try:
+                import base64
+                b64      = base64.b64encode(data).decode("utf-8")
+                media_id = uuid.uuid4().hex
+                mf = MediaFile(id=media_id, mime=mime, data=b64)
+                db.session.add(mf)
+                db.session.commit()
+                return jsonify({"url": f"/media/{media_id}"})
+            except Exception as db_err:
+                print(f"DB fallback failed: {db_err}")
+                # Rollback to avoid session corruption
+                db.session.rollback()
+                return jsonify({"error": f"Upload service temporarily unavailable. Please try again. ({str(db_err)[:80]}...)"}), 503
+        else:
+            return jsonify({"error": "File too large and Cloudinary not available. Configure Cloudinary or use smaller files."}), 503
+
     except Exception as e:
         print(f"Upload error: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e)[:150]}), 500
 
 
 @app.route("/api/sign-upload", methods=["POST"])

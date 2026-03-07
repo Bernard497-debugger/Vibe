@@ -8,6 +8,18 @@ from flask import Flask, request, jsonify, send_from_directory, session, render_
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func
 import cloudinary
+import cloudinary.uploader
+
+# ---------- Cloudinary Config ----------
+cloudinary.config(
+    cloud_name  = os.environ.get("CLOUDINARY_CLOUD_NAME", ""),
+    api_key     = os.environ.get("CLOUDINARY_API_KEY", ""),
+    api_secret  = os.environ.get("CLOUDINARY_API_SECRET", ""),
+)
+
+def _cloudinary_ok():
+    cfg = cloudinary.config()
+    return bool(cfg.cloud_name and cfg.api_key and cfg.api_secret)
 
 # ---------- Config ----------
 APP_DIR   = os.path.dirname(os.path.abspath(__file__))
@@ -2671,10 +2683,28 @@ def api_upload():
     if not f.filename:
         return jsonify({"error": "No filename"}), 400
     data = f.read()
-    if len(data) > 50 * 1024 * 1024:
-        return jsonify({"error": "File too large (max 50MB)"}), 400
+    if len(data) > 100 * 1024 * 1024:
+        return jsonify({"error": "File too large (max 100MB)"}), 400
+    mime = f.mimetype or "application/octet-stream"
+    is_video = mime.startswith("video/")
+
+    # Try Cloudinary first
+    if _cloudinary_ok():
+        try:
+            import io
+            result = cloudinary.uploader.upload(
+                io.BytesIO(data),
+                folder        = "vibenet/posts",
+                resource_type = "video" if is_video else "image",
+                quality       = "auto",
+                fetch_format  = "auto",
+            )
+            return jsonify({"url": result.get("secure_url", "")})
+        except Exception as e:
+            print(f"Cloudinary upload failed: {e}, falling back to DB")
+
+    # Fallback: store as base64 in DB
     import base64
-    mime     = f.mimetype or "application/octet-stream"
     b64      = base64.b64encode(data).decode("utf-8")
     media_id = uuid.uuid4().hex
     mf = MediaFile(id=media_id, mime=mime, data=b64)
@@ -2875,8 +2905,28 @@ def api_update_profile_pic():
     data = f.read()
     if len(data) > 5 * 1024 * 1024:
         return jsonify({"error": "Image too large (max 5MB)"}), 400
+    mime = f.mimetype or "image/jpeg"
+
+    # Try Cloudinary first
+    if _cloudinary_ok():
+        try:
+            import io
+            result = cloudinary.uploader.upload(
+                io.BytesIO(data),
+                folder        = "vibenet/avatars",
+                resource_type = "image",
+                quality       = "auto",
+                fetch_format  = "auto",
+            )
+            url = result.get("secure_url", "")
+            user.profile_pic = url
+            db.session.commit()
+            return jsonify({"success": True, "profile_pic": url})
+        except Exception as e:
+            print(f"Cloudinary avatar upload failed: {e}, falling back to DB")
+
+    # Fallback: store as base64 in DB
     import base64
-    mime     = f.mimetype or "image/jpeg"
     b64      = base64.b64encode(data).decode("utf-8")
     media_id = uuid.uuid4().hex
     mf = MediaFile(id=media_id, mime=mime, data=b64)

@@ -1548,7 +1548,6 @@ body::after {
   .app-layout { padding: 16px 10px; }
 }
 </style>
-<script async src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.6/dist/ffmpeg.min.js"></script>
 </head>
 <body>
 
@@ -1982,36 +1981,24 @@ function showUploadProgress(show, label='Uploading...'){
 
 async function uploadFile(file, folder='vibenet/posts'){
   const isVideo = file.type.startsWith('video/');
-  let fileToUpload = file;
   let thumbnailBlob = null;
   
-  // Compress video if larger than 10MB
-  if(isVideo && file.size > 10 * 1024 * 1024){
-    showUploadProgress(true, `Compressing video (${(file.size/1024/1024).toFixed(1)}MB)...`);
-    try {
-      fileToUpload = await compressVideo(file);
-      showUploadProgress(true, `Extracting thumbnail...`);
-      thumbnailBlob = await extractVideoThumbnail(fileToUpload);
-      showUploadProgress(true, `Uploading compressed video (${(fileToUpload.size/1024/1024).toFixed(1)}MB)...`);
-    } catch(e) {
-      console.warn('Compression/thumbnail failed, uploading original:', e);
-      showUploadProgress(true, `Uploading video (${(file.size/1024/1024).toFixed(1)}MB)...`);
-    }
-  } else if(isVideo) {
+  // Extract thumbnail from video (no compression)
+  if(isVideo) {
     showUploadProgress(true, `Extracting thumbnail...`);
     try {
       thumbnailBlob = await extractVideoThumbnail(file);
     } catch(e) {
       console.warn('Thumbnail extraction failed:', e);
     }
-    showUploadProgress(true, `Uploading video (${(fileToUpload.size/1024/1024).toFixed(1)}MB)...`);
+    showUploadProgress(true, `Uploading video (${(file.size/1024/1024).toFixed(1)}MB)...`);
   } else {
-    showUploadProgress(true, `Uploading image (${(fileToUpload.size/1024/1024).toFixed(1)}MB)...`);
+    showUploadProgress(true, `Uploading image (${(file.size/1024/1024).toFixed(1)}MB)...`);
   }
   
   try {
     const fd = new FormData();
-    fd.append('file', fileToUpload);
+    fd.append('file', file);
     if(thumbnailBlob) fd.append('thumbnail', thumbnailBlob, 'thumb.jpg');
     const res = await fetch(API + '/upload', {method:'POST', body: fd});
     const j = await res.json();
@@ -2046,29 +2033,6 @@ async function extractVideoThumbnail(file){
     video.onerror = () => resolve(null);
     video.src = URL.createObjectURL(file);
   });
-}
-
-async function compressVideo(file){
-  const { FFmpeg, toBlobURL } = FFmpeg;
-  const ffmpeg = new FFmpeg.FFmpeg();
-  const coreURL = await toBlobURL(`https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/ffmpeg-core.js`, 'text/javascript');
-  const wasmURL = await toBlobURL(`https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/ffmpeg-core.wasm`, 'application/wasm');
-  
-  await ffmpeg.load({ coreURL, wasmURL });
-  
-  const inputName = 'input.' + file.name.split('.').pop();
-  const outputName = 'output.mp4';
-  
-  const buffer = await file.arrayBuffer();
-  ffmpeg.FS('writeFile', inputName, new Uint8Array(buffer));
-  
-  await ffmpeg.run('-i', inputName, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '24', '-vf', 'scale=1280:-1', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', outputName);
-  
-  const data = ffmpeg.FS('readFile', outputName);
-  ffmpeg.FS('unlink', inputName);
-  ffmpeg.FS('unlink', outputName);
-  
-  return new File([data.buffer], file.name.replace(/\.[^/.]+$/, '.mp4'), { type: 'video/mp4' });
 }
 
 function optimizeCldUrl(url, isVideo){

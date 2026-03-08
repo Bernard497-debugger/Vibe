@@ -57,7 +57,7 @@ UPLOAD_DIR = os.path.join(APP_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = Flask(__name__, static_folder=None)
-app.config["MAX_CONTENT_LENGTH"] = 300 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024
 app.config["PORT"] = int(os.environ.get("PORT", 5000))
 app.secret_key = os.environ.get("SECRET_KEY", "vibenet_secret_dev")
 
@@ -1978,7 +1978,17 @@ function showUploadProgress(show, label='Uploading...'){
 
 async function uploadFile(file, folder='vibenet/posts'){
   const isVideo = file.type.startsWith('video/');
-  showUploadProgress(true, `Uploading ${isVideo ? 'video' : 'image'} (${(file.size/1024/1024).toFixed(1)}MB)...`);
+  const maxSize = isVideo ? 50 * 1024 * 1024 : 100 * 1024 * 1024; // 50MB video, 100MB image
+  
+  // Check file size
+  if(file.size > maxSize){
+    const maxMB = isVideo ? 50 : 100;
+    alert(`${isVideo ? 'Video' : 'Image'} must be under ${maxMB}MB. Current size: ${(file.size/1024/1024).toFixed(1)}MB`);
+    return {url: '', thumbnail: ''};
+  }
+  
+  const isVideoFile = file.type.startsWith('video/');
+  showUploadProgress(true, `Uploading ${isVideoFile ? 'video' : 'image'} (${(file.size/1024/1024).toFixed(1)}MB)...`);
   
   try {
     const fd = new FormData();
@@ -2866,6 +2876,46 @@ def verify_phone_otp():
     return jsonify({"success": True, "message": "Phone verified!", "user": user.to_dict()})
 
 
+def trim_video_by_size(input_path, output_path, max_size_mb=10):
+    """Trim video to max file size by reducing bitrate"""
+    try:
+        import subprocess
+        max_size_bytes = max_size_mb * 1024 * 1024
+        
+        # Get video duration first
+        probe_cmd = [
+            'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1:nokey=1', input_path
+        ]
+        result = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=30)
+        try:
+            duration = float(result.stdout.strip())
+        except:
+            duration = 60
+        
+        # Calculate target bitrate to fit in max_size
+        target_bitrate = int((max_size_bytes * 8) / duration / 1000)  # in kbps
+        target_bitrate = max(300, target_bitrate)  # Minimum 300kbps for quality
+        
+        # Encode with calculated bitrate
+        cmd = [
+            'ffmpeg', '-i', input_path,
+            '-b:v', f'{target_bitrate}k',
+            '-c:v', 'libx264', '-preset', 'ultrafast',
+            '-c:a', 'aac', '-b:a', '64k',
+            '-y', output_path
+        ]
+        subprocess.run(cmd, capture_output=True, timeout=300, check=True)
+        
+        # Check output size
+        output_size = os.path.getsize(output_path)
+        print(f"Video trimmed by size: {output_size / 1024 / 1024:.1f}MB (target: {max_size_mb}MB)")
+        return True
+    except Exception as e:
+        print(f"Video trim by size failed: {e}")
+        return False
+
+
 # ---------- Upload ----------
 @app.route("/api/upload", methods=["POST"])
 def api_upload():
@@ -2876,8 +2926,12 @@ def api_upload():
         if not f.filename:
             return jsonify({"error": "No filename"}), 400
         data = f.read()
-        if len(data) > 100 * 1024 * 1024:
-            return jsonify({"error": "File too large (max 100MB)"}), 400
+        is_video = mime.startswith('video/')
+        max_size = 50 * 1024 * 1024 if is_video else 100 * 1024 * 1024  # 50MB video, 100MB image
+        
+        if len(data) > max_size:
+            max_mb = 50 if is_video else 100
+            return jsonify({"error": f"File too large (max {max_mb}MB)"}), 400
         mime = f.mimetype or "application/octet-stream"
         
         # Optional thumbnail
@@ -2890,6 +2944,33 @@ def api_upload():
         # Try Supabase Storage first (preferred)
         if _supabase_ok():
             try:
+                # Trim video if needed (reduce file size to 10MB)
+                if is_video:
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as tmp_in:
+                        tmp_in.write(data)
+                        tmp_in.flush()
+                        tmp_in_path = tmp_in.name
+                    
+                    with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as tmp_out:
+                        tmp_out_path = tmp_out.name
+                    
+                    # Trim to 10MB
+                    if trim_video_by_size(tmp_in_path, tmp_out_path, max_size_mb=10):
+                        try:
+                            with open(tmp_out_path, 'rb') as trimmed_file:
+                                data = trimmed_file.read()
+                            print(f"Video trimmed to {len(data) / 1024 / 1024:.1f}MB")
+                        except Exception as e:
+                            print(f"Failed to read trimmed video: {e}")
+                    
+                    # Cleanup temp files
+                    try:
+                        os.unlink(tmp_in_path)
+                        os.unlink(tmp_out_path)
+                    except:
+                        pass
+                
                 file_id = uuid.uuid4().hex
                 file_ext = os.path.splitext(f.filename)[1] or ".bin"
                 file_path = f"posts/{file_id}{file_ext}"

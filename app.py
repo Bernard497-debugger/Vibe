@@ -113,6 +113,7 @@ class Post(db.Model):
     text           = db.Column(db.Text, default="")
     file_url       = db.Column(db.Text, default="")
     file_mime      = db.Column(db.Text, default="")
+    thumbnail_url  = db.Column(db.Text, default="")
     timestamp      = db.Column(db.Text, default=lambda: now_ts())
     reactions_json = db.Column(db.Text, default='{"👍":0,"❤️":0,"😂":0}')
     comments_count = db.Column(db.Integer, default=0)
@@ -128,10 +129,9 @@ class Post(db.Model):
             "id": self.id, "author_email": self.author_email,
             "author_name": self.author_name, "profile_pic": self.profile_pic,
             "text": self.text, "file_url": self.file_url, "file_mime": self.file_mime or "",
-            "timestamp": self.timestamp, "reactions": self.reactions(),
-            "comments_count": self.comments_count,
-            "user_reaction": user_reaction,
-            "author_verified": author_verified,
+            "thumbnail_url": self.thumbnail_url or "", "timestamp": self.timestamp, 
+            "reactions": self.reactions(), "comments_count": self.comments_count,
+            "user_reaction": user_reaction, "author_verified": author_verified,
         }
 
 
@@ -1924,39 +1924,72 @@ function showUploadProgress(show, label='Uploading...'){
 async function uploadFile(file, folder='vibenet/posts'){
   const isVideo = file.type.startsWith('video/');
   let fileToUpload = file;
+  let thumbnailBlob = null;
   
   // Compress video if larger than 10MB
   if(isVideo && file.size > 10 * 1024 * 1024){
     showUploadProgress(true, `Compressing video (${(file.size/1024/1024).toFixed(1)}MB)...`);
     try {
       fileToUpload = await compressVideo(file);
+      showUploadProgress(true, `Extracting thumbnail...`);
+      thumbnailBlob = await extractVideoThumbnail(fileToUpload);
       showUploadProgress(true, `Uploading compressed video (${(fileToUpload.size/1024/1024).toFixed(1)}MB)...`);
     } catch(e) {
-      console.warn('Compression failed, uploading original:', e);
+      console.warn('Compression/thumbnail failed, uploading original:', e);
       showUploadProgress(true, `Uploading video (${(file.size/1024/1024).toFixed(1)}MB)...`);
     }
+  } else if(isVideo) {
+    showUploadProgress(true, `Extracting thumbnail...`);
+    try {
+      thumbnailBlob = await extractVideoThumbnail(file);
+    } catch(e) {
+      console.warn('Thumbnail extraction failed:', e);
+    }
+    showUploadProgress(true, `Uploading video (${(fileToUpload.size/1024/1024).toFixed(1)}MB)...`);
   } else {
-    showUploadProgress(true, `Uploading ${isVideo ? 'video' : 'image'} (${(fileToUpload.size/1024/1024).toFixed(1)}MB)...`);
+    showUploadProgress(true, `Uploading image (${(fileToUpload.size/1024/1024).toFixed(1)}MB)...`);
   }
   
   try {
     const fd = new FormData();
     fd.append('file', fileToUpload);
+    if(thumbnailBlob) fd.append('thumbnail', thumbnailBlob, 'thumb.jpg');
     const res = await fetch(API + '/upload', {method:'POST', body: fd});
     const j = await res.json();
     showUploadProgress(false);
     if(j.error) throw new Error(j.error);
-    return j.url || '';
+    return {url: j.url || '', thumbnail: j.thumbnail || ''};
   } catch(e) {
     showUploadProgress(false);
     console.error('Upload failed:', e.message);
     alert('Upload failed: ' + e.message);
-    return '';
+    return {url: '', thumbnail: ''};
   }
 }
 
+async function extractVideoThumbnail(file){
+  return new Promise((resolve) => {
+    const video = document.createElement('video');
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    
+    video.onloadedmetadata = () => {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      video.currentTime = Math.min(1, video.duration * 0.1);
+    };
+    
+    video.onseeked = () => {
+      ctx.drawImage(video, 0, 0);
+      canvas.toBlob(resolve, 'image/jpeg', 0.8);
+    };
+    
+    video.onerror = () => resolve(null);
+    video.src = URL.createObjectURL(file);
+  });
+}
+
 async function compressVideo(file){
-  // Load ffmpeg.wasm
   const { FFmpeg, toBlobURL } = FFmpeg;
   const ffmpeg = new FFmpeg.FFmpeg();
   const coreURL = await toBlobURL(`https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/ffmpeg-core.js`, 'text/javascript');
@@ -1967,14 +2000,11 @@ async function compressVideo(file){
   const inputName = 'input.' + file.name.split('.').pop();
   const outputName = 'output.mp4';
   
-  // Write file to ffmpeg
   const buffer = await file.arrayBuffer();
   ffmpeg.FS('writeFile', inputName, new Uint8Array(buffer));
   
-  // Compress: lower bitrate, scale down, increase speed
-  await ffmpeg.run('-i', inputName, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28', '-vf', 'scale=1280:-1', '-c:a', 'aac', '-b:a', '64k', outputName);
+  await ffmpeg.run('-i', inputName, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '24', '-vf', 'scale=1280:-1', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', outputName);
   
-  // Read output
   const data = ffmpeg.FS('readFile', outputName);
   ffmpeg.FS('unlink', inputName);
   ffmpeg.FS('unlink', outputName);
@@ -2029,15 +2059,17 @@ async function addPost(){
   if(!currentUser){ alert('Please login first.'); return; }
   const text = byId('postText').value.trim();
   const fileEl = byId('fileUpload');
-  let url = '', mime = '';
+  let url = '', mime = '', thumbnail = '';
   if(fileEl.files[0]){
     mime = fileEl.files[0].type;
-    url = await uploadFile(fileEl.files[0]);
+    const result = await uploadFile(fileEl.files[0]);
+    url = result.url;
+    thumbnail = result.thumbnail;
   }
   if(!text && !url) return;
   await fetch(API + '/posts', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
     author_email: currentUser.email, author_name: currentUser.name,
-    profile_pic: currentUser.profile_pic||'', text, file_url: url, file_mime: mime
+    profile_pic: currentUser.profile_pic||'', text, file_url: url, file_mime: mime, thumbnail_url: thumbnail
   })});
   byId('postText').value=''; fileEl.value=''; byId('fileNameDisplay').textContent='';
   await loadFeed(true); await loadProfilePosts(); await loadMonetization();
@@ -2110,6 +2142,7 @@ function createPostElement(p){
       v.setAttribute('playsinline','');
       v.setAttribute('preload', 'metadata');
       v.style.background = '#0d1117';
+      if(p.thumbnail_url) v.poster = p.thumbnail_url;
 
       // Lazy load: set src when near viewport
       const vObs = new IntersectionObserver(entries => {
@@ -2726,6 +2759,13 @@ def api_upload():
         if len(data) > 100 * 1024 * 1024:
             return jsonify({"error": "File too large (max 100MB)"}), 400
         mime = f.mimetype or "application/octet-stream"
+        
+        # Optional thumbnail
+        thumbnail_data = None
+        thumbnail_url = ""
+        if "thumbnail" in request.files:
+            thumb = request.files["thumbnail"]
+            thumbnail_data = thumb.read()
 
         # Try Supabase Storage first (preferred)
         if _supabase_ok():
@@ -2734,7 +2774,7 @@ def api_upload():
                 file_ext = os.path.splitext(f.filename)[1] or ".bin"
                 file_path = f"posts/{file_id}{file_ext}"
                 
-                # Upload to Supabase Storage
+                # Upload main file to Supabase Storage
                 headers = {
                     "Authorization": f"Bearer {SUPABASE_KEY}",
                     "Content-Type": mime,
@@ -2746,7 +2786,24 @@ def api_upload():
                 if response.status_code in (200, 201):
                     # Return public URL
                     public_url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{file_path}"
-                    return jsonify({"url": public_url})
+                    
+                    # Upload thumbnail if provided
+                    if thumbnail_data:
+                        try:
+                            thumb_id = uuid.uuid4().hex
+                            thumb_path = f"posts/{thumb_id}_thumb.jpg"
+                            thumb_headers = {
+                                "Authorization": f"Bearer {SUPABASE_KEY}",
+                                "Content-Type": "image/jpeg",
+                            }
+                            thumb_url = f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{thumb_path}"
+                            thumb_resp = requests.post(thumb_url, data=thumbnail_data, headers=thumb_headers, timeout=60)
+                            if thumb_resp.status_code in (200, 201):
+                                thumbnail_url = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{thumb_path}"
+                        except Exception as e:
+                            print(f"Thumbnail upload failed: {e}")
+                    
+                    return jsonify({"url": public_url, "thumbnail": thumbnail_url})
                 else:
                     print(f"Supabase upload failed: {response.status_code} - {response.text}")
                     # Fall back to DB for small files only
@@ -2767,7 +2824,7 @@ def api_upload():
                 mf = MediaFile(id=media_id, mime=mime, data=b64)
                 db.session.add(mf)
                 db.session.commit()
-                return jsonify({"url": f"/media/{media_id}"})
+                return jsonify({"url": f"/media/{media_id}", "thumbnail": thumbnail_url})
             except Exception as db_err:
                 print(f"DB fallback failed: {db_err}")
                 db.session.rollback()
@@ -2822,6 +2879,7 @@ def api_posts():
         text=data.get("text", ""),
         file_url=data.get("file_url", ""),
         file_mime=data.get("file_mime", ""),
+        thumbnail_url=data.get("thumbnail_url", ""),
     )
     db.session.add(post)
     db.session.commit()

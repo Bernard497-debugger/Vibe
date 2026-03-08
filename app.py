@@ -2142,6 +2142,16 @@ function createPostElement(p){
       v.setAttribute('preload', 'metadata');
       v.style.background = '#0d1117';
 
+      // Auto-pause when scrolled out of view
+      const vObs = new IntersectionObserver(entries => {
+        entries.forEach(e => {
+          if(!e.isIntersecting && !v.paused){
+            v.pause();
+          }
+        });
+      }, { threshold: 0.5 });
+      vObs.observe(v);
+
       const hint = document.createElement('div'); hint.className='play-hint';
       hint.innerHTML='<span>▶</span>';
       v.addEventListener('play', ()=>{ wrap.classList.add('playing'); });

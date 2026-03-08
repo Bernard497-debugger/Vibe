@@ -2136,37 +2136,11 @@ function createPostElement(p){
     if(isVideo){
       const wrap = document.createElement('div'); wrap.className='video-wrap';
       const v = document.createElement('video');
-      v.dataset.src = optimizeCldUrl(p.file_url, true);
+      v.src = optimizeCldUrl(p.file_url, true);
       v.controls = true; v.muted = true; v.loop = false;
       v.setAttribute('playsinline','');
       v.setAttribute('preload', 'metadata');
       v.style.background = '#0d1117';
-      if(p.thumbnail_url) v.poster = p.thumbnail_url;
-
-      // Lazy load: set src when near viewport
-      const vObs = new IntersectionObserver(entries => {
-        entries.forEach(e => {
-          if(e.isIntersecting && v.dataset.src){
-            v.src = v.dataset.src;
-            delete v.dataset.src;
-            vObs.disconnect();
-            // Thumbnail after src loads
-            v.addEventListener('loadedmetadata', ()=>{ v.currentTime = 0.05; });
-            v.addEventListener('seeked', ()=>{
-              if(v.dataset.thumbDone) return;
-              v.dataset.thumbDone = '1';
-              try {
-                const canvas = document.createElement('canvas');
-                canvas.width = v.videoWidth || 640;
-                canvas.height = v.videoHeight || 360;
-                canvas.getContext('2d').drawImage(v, 0, 0, canvas.width, canvas.height);
-                v.poster = canvas.toDataURL('image/jpeg', 0.7);
-              } catch(e){}
-            }, { once: true });
-          }
-        });
-      }, { rootMargin: '300px' });
-      vObs.observe(v);
 
       const hint = document.createElement('div'); hint.className='play-hint';
       hint.innerHTML='<span>▶</span>';
@@ -2878,6 +2852,7 @@ def api_posts():
         text=data.get("text", ""),
         file_url=data.get("file_url", ""),
         file_mime=data.get("file_mime", ""),
+        thumbnail_url=data.get("thumbnail_url", ""),
     )
     db.session.add(post)
     db.session.commit()

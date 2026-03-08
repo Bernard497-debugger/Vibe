@@ -17,17 +17,21 @@ SUPABASE_BUCKET = os.environ.get("SUPABASE_BUCKET", "vibenet")
 def _supabase_ok():
     return bool(SUPABASE_URL and SUPABASE_KEY)
 
-# ---------- Liquid SMS Config (Botswana) ----------
-LIQUID_API_KEY = os.environ.get("LIQUID_API_KEY", "")
-LIQUID_API_URL = "https://api.liquidsms.com/send"
+# ---------- Twilio SMS Config ----------
+TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
+TWILIO_FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER", "")
 
 def send_sms(phone, message):
-    """Send SMS via Liquid Intelligent Technologies"""
-    if not LIQUID_API_KEY:
-        print(f"Liquid SMS not configured. OTP for {phone}: Would be sent via SMS")
+    """Send SMS via Twilio"""
+    if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN or not TWILIO_FROM_NUMBER:
+        print(f"Twilio not configured. SMS for {phone}: {message}")
         return True  # Fail gracefully in dev
     
     try:
+        from twilio.rest import Client
+        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        
         # Ensure phone number has country code
         if not phone.startswith("+"):
             if phone.startswith("267"):
@@ -35,23 +39,16 @@ def send_sms(phone, message):
             else:
                 phone = "+267" + phone.lstrip("0")
         
-        payload = {
-            "api_key": LIQUID_API_KEY,
-            "to": phone,
-            "body": message,
-        }
+        msg = client.messages.create(
+            body=message,
+            from_=TWILIO_FROM_NUMBER,
+            to=phone
+        )
         
-        response = requests.post(LIQUID_API_URL, json=payload, timeout=10)
-        result = response.json()
-        
-        if response.status_code == 200 and result.get("status") == "success":
-            print(f"SMS sent to {phone}")
-            return True
-        else:
-            print(f"SMS failed: {result}")
-            return False
+        print(f"SMS sent to {phone}, SID: {msg.sid}")
+        return True
     except Exception as e:
-        print(f"SMS error: {e}")
+        print(f"Twilio SMS error: {e}")
         return False
 
 # ---------- Config ----------
@@ -1981,25 +1978,11 @@ function showUploadProgress(show, label='Uploading...'){
 
 async function uploadFile(file, folder='vibenet/posts'){
   const isVideo = file.type.startsWith('video/');
-  let thumbnailBlob = null;
-  
-  // Extract thumbnail from video (no compression)
-  if(isVideo) {
-    showUploadProgress(true, `Extracting thumbnail...`);
-    try {
-      thumbnailBlob = await extractVideoThumbnail(file);
-    } catch(e) {
-      console.warn('Thumbnail extraction failed:', e);
-    }
-    showUploadProgress(true, `Uploading video (${(file.size/1024/1024).toFixed(1)}MB)...`);
-  } else {
-    showUploadProgress(true, `Uploading image (${(file.size/1024/1024).toFixed(1)}MB)...`);
-  }
+  showUploadProgress(true, `Uploading ${isVideo ? 'video' : 'image'} (${(file.size/1024/1024).toFixed(1)}MB)...`);
   
   try {
     const fd = new FormData();
     fd.append('file', file);
-    if(thumbnailBlob) fd.append('thumbnail', thumbnailBlob, 'thumb.jpg');
     const res = await fetch(API + '/upload', {method:'POST', body: fd});
     const j = await res.json();
     showUploadProgress(false);

@@ -2755,7 +2755,13 @@ def api_signup():
         return jsonify({"error": "email + password required"}), 400
     if User.query.filter_by(email=email).first():
         return jsonify({"error": "User already exists"}), 400
+    
+    # Handle profile_pic as string or dict
     profile_pic = data.get("profile_pic", "")
+    if isinstance(profile_pic, dict):
+        profile_pic = profile_pic.get("url", "")
+    profile_pic = str(profile_pic).strip() if profile_pic else ""
+    
     user = User(name=name, email=email, password=password, profile_pic=profile_pic)
     db.session.add(user)
     db.session.commit()

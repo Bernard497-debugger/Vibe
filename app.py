@@ -17,6 +17,43 @@ SUPABASE_BUCKET = os.environ.get("SUPABASE_BUCKET", "vibenet")
 def _supabase_ok():
     return bool(SUPABASE_URL and SUPABASE_KEY)
 
+# ---------- Liquid SMS Config (Botswana) ----------
+LIQUID_API_KEY = os.environ.get("LIQUID_API_KEY", "")
+LIQUID_API_URL = "https://api.liquidsms.com/send"
+
+def send_sms(phone, message):
+    """Send SMS via Liquid Intelligent Technologies"""
+    if not LIQUID_API_KEY:
+        print(f"Liquid SMS not configured. OTP for {phone}: Would be sent via SMS")
+        return True  # Fail gracefully in dev
+    
+    try:
+        # Ensure phone number has country code
+        if not phone.startswith("+"):
+            if phone.startswith("267"):
+                phone = "+" + phone
+            else:
+                phone = "+267" + phone.lstrip("0")
+        
+        payload = {
+            "api_key": LIQUID_API_KEY,
+            "to": phone,
+            "body": message,
+        }
+        
+        response = requests.post(LIQUID_API_URL, json=payload, timeout=10)
+        result = response.json()
+        
+        if response.status_code == 200 and result.get("status") == "success":
+            print(f"SMS sent to {phone}")
+            return True
+        else:
+            print(f"SMS failed: {result}")
+            return False
+    except Exception as e:
+        print(f"SMS error: {e}")
+        return False
+
 # ---------- Config ----------
 APP_DIR   = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.path.join(APP_DIR, "uploads")
@@ -79,6 +116,9 @@ class User(db.Model):
     earnings          = db.Column(db.Float, default=0.0)
     verified          = db.Column(db.Integer, default=0)
     banned            = db.Column(db.Integer, default=0)
+    email_verified    = db.Column(db.Integer, default=0)
+    phone             = db.Column(db.Text, default="")
+    phone_verified    = db.Column(db.Integer, default=0)
     last_active       = db.Column(db.Text, default="")
     created_at        = db.Column(db.Text, default=lambda: now_ts())
 
@@ -89,6 +129,9 @@ class User(db.Model):
             "watch_hours": self.watch_hours, "earnings": self.earnings,
             "verified": bool(self.verified),
             "banned": bool(self.banned),
+            "email_verified": bool(self.email_verified),
+            "phone": self.phone or "",
+            "phone_verified": bool(self.phone_verified),
             "last_active": self.last_active or "",
         }
 
@@ -113,6 +156,7 @@ class Post(db.Model):
     text           = db.Column(db.Text, default="")
     file_url       = db.Column(db.Text, default="")
     file_mime      = db.Column(db.Text, default="")
+    thumbnail_url  = db.Column(db.Text, default="")
     timestamp      = db.Column(db.Text, default=lambda: now_ts())
     reactions_json = db.Column(db.Text, default='{"👍":0,"❤️":0,"😂":0}')
     comments_count = db.Column(db.Integer, default=0)
@@ -128,8 +172,8 @@ class Post(db.Model):
             "id": self.id, "author_email": self.author_email,
             "author_name": self.author_name, "profile_pic": self.profile_pic,
             "text": self.text, "file_url": self.file_url, "file_mime": self.file_mime or "",
-            "timestamp": self.timestamp, "reactions": self.reactions(),
-            "comments_count": self.comments_count,
+            "thumbnail_url": self.thumbnail_url or "", "timestamp": self.timestamp, 
+            "reactions": self.reactions(), "comments_count": self.comments_count,
             "user_reaction": user_reaction, "author_verified": author_verified,
         }
 
@@ -156,6 +200,22 @@ class Notification(db.Model):
 
     def to_dict(self):
         return {"id": self.id, "text": self.text, "timestamp": self.timestamp, "seen": self.seen}
+
+
+class EmailVerificationToken(db.Model):
+    __tablename__ = "email_verification_tokens"
+    id       = db.Column(db.Integer, primary_key=True)
+    email    = db.Column(db.Text, nullable=False)
+    token    = db.Column(db.Text, unique=True, nullable=False)
+    created_at = db.Column(db.Text, default=lambda: now_ts())
+
+
+class PhoneVerificationToken(db.Model):
+    __tablename__ = "phone_verification_tokens"
+    id        = db.Column(db.Integer, primary_key=True)
+    phone     = db.Column(db.Text, nullable=False)
+    otp       = db.Column(db.Text, nullable=False)  # 6-digit code
+    created_at = db.Column(db.Text, default=lambda: now_ts())
 
 
 class Ad(db.Model):
@@ -2141,6 +2201,7 @@ function createPostElement(p){
       v.setAttribute('playsinline','');
       v.setAttribute('preload', 'metadata');
       v.style.background = '#0d1117';
+      if(p.thumbnail_url) v.poster = p.thumbnail_url;
 
       // Auto-pause when scrolled out of view
       const vObs = new IntersectionObserver(entries => {
@@ -2727,6 +2788,129 @@ def api_me():
         return jsonify({"user": None})
     user = User.query.filter_by(email=email).first()
     return jsonify({"user": user.to_dict() if user else None})
+
+
+@app.route("/api/send-verification-email", methods=["POST"])
+def send_verification_email():
+    """Send verification email to user"""
+    email = session.get("user_email")
+    if not email:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    
+    if user.email_verified:
+        return jsonify({"error": "Email already verified"}), 400
+    
+    # Generate token
+    token = uuid.uuid4().hex
+    # Delete old tokens for this email
+    EmailVerificationToken.query.filter_by(email=email).delete()
+    evt = EmailVerificationToken(email=email, token=token)
+    db.session.add(evt)
+    db.session.commit()
+    
+    # Build verification link
+    verification_url = f"https://vibe-net-revm.onrender.com/verify-email?token={token}"
+    
+    # TODO: Send email via SMTP
+    # For now, just return the link (you'll integrate email service later)
+    print(f"Verification link for {email}: {verification_url}")
+    
+    return jsonify({"success": True, "message": "Verification email sent"})
+
+
+@app.route("/api/verify-email", methods=["POST"])
+def verify_email():
+    """Verify email token"""
+    data = request.get_json() or {}
+    token = data.get("token", "")
+    
+    if not token:
+        return jsonify({"error": "Token required"}), 400
+    
+    evt = EmailVerificationToken.query.filter_by(token=token).first()
+    if not evt:
+        return jsonify({"error": "Invalid or expired token"}), 400
+    
+    user = User.query.filter_by(email=evt.email).first()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    
+    user.email_verified = 1
+    db.session.delete(evt)
+    db.session.commit()
+    
+    return jsonify({"success": True, "message": "Email verified!"})
+
+
+@app.route("/api/send-phone-otp", methods=["POST"])
+def send_phone_otp():
+    """Send OTP to phone number via Liquid SMS"""
+    data = request.get_json() or {}
+    phone = data.get("phone", "").strip()
+    
+    if not phone:
+        return jsonify({"error": "Phone number required"}), 400
+    
+    email = session.get("user_email")
+    if not email:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    
+    # Generate 6-digit OTP
+    import random
+    otp = str(random.randint(100000, 999999))
+    
+    # Delete old OTPs for this phone
+    PhoneVerificationToken.query.filter_by(phone=phone).delete()
+    pvt = PhoneVerificationToken(phone=phone, otp=otp)
+    db.session.add(pvt)
+    db.session.commit()
+    
+    # Send SMS via Liquid SMS
+    message = f"Your VibeNet verification code is: {otp}"
+    sms_sent = send_sms(phone, message)
+    
+    if sms_sent:
+        return jsonify({"success": True, "message": "OTP sent to phone"})
+    else:
+        return jsonify({"error": "Failed to send SMS"}), 503
+
+
+@app.route("/api/verify-phone-otp", methods=["POST"])
+def verify_phone_otp():
+    """Verify phone OTP"""
+    data = request.get_json() or {}
+    phone = data.get("phone", "").strip()
+    otp = data.get("otp", "").strip()
+    
+    if not phone or not otp:
+        return jsonify({"error": "Phone and OTP required"}), 400
+    
+    email = session.get("user_email")
+    if not email:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    pvt = PhoneVerificationToken.query.filter_by(phone=phone, otp=otp).first()
+    if not pvt:
+        return jsonify({"error": "Invalid OTP"}), 400
+    
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    
+    user.phone = phone
+    user.phone_verified = 1
+    db.session.delete(pvt)
+    db.session.commit()
+    
+    return jsonify({"success": True, "message": "Phone verified!", "user": user.to_dict()})
 
 
 # ---------- Upload ----------

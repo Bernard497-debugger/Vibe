@@ -1489,6 +1489,7 @@ body::after {
   .app-layout { padding: 16px 10px; }
 }
 </style>
+<script async src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.6/dist/ffmpeg.min.js"></script>
 </head>
 <body>
 
@@ -1922,10 +1923,25 @@ function showUploadProgress(show, label='Uploading...'){
 
 async function uploadFile(file, folder='vibenet/posts'){
   const isVideo = file.type.startsWith('video/');
-  showUploadProgress(true, `Uploading ${isVideo ? 'video' : 'image'} (${(file.size/1024/1024).toFixed(1)}MB)...`);
+  let fileToUpload = file;
+  
+  // Compress video if larger than 10MB
+  if(isVideo && file.size > 10 * 1024 * 1024){
+    showUploadProgress(true, `Compressing video (${(file.size/1024/1024).toFixed(1)}MB)...`);
+    try {
+      fileToUpload = await compressVideo(file);
+      showUploadProgress(true, `Uploading compressed video (${(fileToUpload.size/1024/1024).toFixed(1)}MB)...`);
+    } catch(e) {
+      console.warn('Compression failed, uploading original:', e);
+      showUploadProgress(true, `Uploading video (${(file.size/1024/1024).toFixed(1)}MB)...`);
+    }
+  } else {
+    showUploadProgress(true, `Uploading ${isVideo ? 'video' : 'image'} (${(fileToUpload.size/1024/1024).toFixed(1)}MB)...`);
+  }
+  
   try {
     const fd = new FormData();
-    fd.append('file', file);
+    fd.append('file', fileToUpload);
     const res = await fetch(API + '/upload', {method:'POST', body: fd});
     const j = await res.json();
     showUploadProgress(false);
@@ -1937,6 +1953,33 @@ async function uploadFile(file, folder='vibenet/posts'){
     alert('Upload failed: ' + e.message);
     return '';
   }
+}
+
+async function compressVideo(file){
+  // Load ffmpeg.wasm
+  const { FFmpeg, toBlobURL } = FFmpeg;
+  const ffmpeg = new FFmpeg.FFmpeg();
+  const coreURL = await toBlobURL(`https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/ffmpeg-core.js`, 'text/javascript');
+  const wasmURL = await toBlobURL(`https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/ffmpeg-core.wasm`, 'application/wasm');
+  
+  await ffmpeg.load({ coreURL, wasmURL });
+  
+  const inputName = 'input.' + file.name.split('.').pop();
+  const outputName = 'output.mp4';
+  
+  // Write file to ffmpeg
+  const buffer = await file.arrayBuffer();
+  ffmpeg.FS('writeFile', inputName, new Uint8Array(buffer));
+  
+  // Compress: lower bitrate, scale down, increase speed
+  await ffmpeg.run('-i', inputName, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28', '-vf', 'scale=1280:-1', '-c:a', 'aac', '-b:a', '64k', outputName);
+  
+  // Read output
+  const data = ffmpeg.FS('readFile', outputName);
+  ffmpeg.FS('unlink', inputName);
+  ffmpeg.FS('unlink', outputName);
+  
+  return new File([data.buffer], file.name.replace(/\.[^/.]+$/, '.mp4'), { type: 'video/mp4' });
 }
 
 function optimizeCldUrl(url, isVideo){

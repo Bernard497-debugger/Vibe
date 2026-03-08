@@ -2878,7 +2878,6 @@ def api_posts():
         text=data.get("text", ""),
         file_url=data.get("file_url", ""),
         file_mime=data.get("file_mime", ""),
-        thumbnail_url=data.get("thumbnail_url", ""),
     )
     db.session.add(post)
     db.session.commit()

@@ -2926,13 +2926,13 @@ def api_upload():
         if not f.filename:
             return jsonify({"error": "No filename"}), 400
         data = f.read()
+        mime = f.mimetype or "application/octet-stream"
         is_video = mime.startswith('video/')
         max_size = 50 * 1024 * 1024 if is_video else 100 * 1024 * 1024  # 50MB video, 100MB image
         
         if len(data) > max_size:
             max_mb = 50 if is_video else 100
             return jsonify({"error": f"File too large (max {max_mb}MB)"}), 400
-        mime = f.mimetype or "application/octet-stream"
         
         # Optional thumbnail
         thumbnail_data = None

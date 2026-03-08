@@ -2698,7 +2698,7 @@ def api_upload():
                 }
                 url = f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{file_path}"
                 
-                response = requests.post(url, data=data, headers=headers, timeout=120)
+                response = requests.post(url, data=data, headers=headers, timeout=300)
                 
                 if response.status_code in (200, 201):
                     # Return public URL

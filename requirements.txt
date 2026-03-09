@@ -1,7 +1,10 @@
-Flask==3.0.0
-Flask-SQLAlchemy==3.1.1
-SQLAlchemy==2.0.29
-requests==2.31.0
-Werkzeug==3.0.1
+Flask==2.3.3
+Flask-SQLAlchemy==3.0.5
+SQLAlchemy==2.0.21
+Werkzeug==2.3.7
+psycopg2-binary==2.9.7
 gunicorn==21.2.0
-psycopg2-binary==2.9.9
+python-dotenv==1.0.0
+requests==2.31.0
+Pillow==10.0.0
+cloudinary==1.33.0

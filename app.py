@@ -2160,6 +2160,48 @@ function createPostElement(p){
       v.style.background = '#0d1117';
       if(p.thumbnail_url) v.poster = p.thumbnail_url;
 
+      // Show thumbnail image by default (works on all browsers including Facebook Lite)
+      const thumbImg = document.createElement('img');
+      let showingThumbnail = false;
+      
+      if(p.thumbnail_url){
+        thumbImg.src = p.thumbnail_url;
+        thumbImg.style.width = '100%';
+        thumbImg.style.height = 'auto';
+        thumbImg.style.display = 'block';
+        thumbImg.style.cursor = 'pointer';
+        thumbImg.style.backgroundColor = '#0d1117';
+        showingThumbnail = true;
+      }
+      
+      const playOverlay = document.createElement('div');
+      playOverlay.style.position = 'absolute';
+      playOverlay.style.top = '0';
+      playOverlay.style.left = '0';
+      playOverlay.style.width = '100%';
+      playOverlay.style.height = '100%';
+      playOverlay.style.display = showingThumbnail ? 'flex' : 'none';
+      playOverlay.style.alignItems = 'center';
+      playOverlay.style.justifyContent = 'center';
+      playOverlay.style.backgroundColor = 'rgba(0,0,0,0.3)';
+      playOverlay.style.cursor = 'pointer';
+      playOverlay.innerHTML = '<span style="font-size:60px;color:white;text-shadow:0 0 10px rgba(0,0,0,0.7)">▶</span>';
+      
+      wrap.style.position = 'relative';
+      
+      const switchToVideo = () => {
+        if(showingThumbnail){
+          thumbImg.style.display = 'none';
+          playOverlay.style.display = 'none';
+          v.style.display = 'block';
+          showingThumbnail = false;
+          v.play();
+        }
+      };
+      
+      thumbImg.addEventListener('click', switchToVideo);
+      playOverlay.addEventListener('click', switchToVideo);
+
       // Auto-pause when scrolled out of view
       const vObs = new IntersectionObserver(entries => {
         entries.forEach(e => {
@@ -2181,7 +2223,9 @@ function createPostElement(p){
         await fetch(API+'/ads/impression',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({post_id:p.id,viewer:currentUser?currentUser.email:''})});
         loadMonetization();
       });
-      wrap.append(v, hint);
+      
+      v.style.display = 'none';
+      wrap.append(thumbImg, playOverlay, v, hint);
       media.append(wrap);
     } else {
       const im=document.createElement('img'); im.src=optimizeCldUrl(p.file_url, false); media.append(im);
@@ -2876,45 +2920,6 @@ def verify_phone_otp():
     return jsonify({"success": True, "message": "Phone verified!", "user": user.to_dict()})
 
 
-def trim_video_by_size(input_path, output_path, max_size_mb=10):
-    """Trim video to max file size by reducing bitrate"""
-    try:
-        import subprocess
-        max_size_bytes = max_size_mb * 1024 * 1024
-        
-        # Get video duration first
-        probe_cmd = [
-            'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
-            '-of', 'default=noprint_wrappers=1:nokey=1:nokey=1', input_path
-        ]
-        result = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=30)
-        try:
-            duration = float(result.stdout.strip())
-        except:
-            duration = 60
-        
-        # Calculate target bitrate to fit in max_size
-        target_bitrate = int((max_size_bytes * 8) / duration / 1000)  # in kbps
-        target_bitrate = max(300, target_bitrate)  # Minimum 300kbps for quality
-        
-        # Encode with calculated bitrate
-        cmd = [
-            'ffmpeg', '-i', input_path,
-            '-b:v', f'{target_bitrate}k',
-            '-c:v', 'libx264', '-preset', 'ultrafast',
-            '-c:a', 'aac', '-b:a', '64k',
-            '-y', output_path
-        ]
-        subprocess.run(cmd, capture_output=True, timeout=300, check=True)
-        
-        # Check output size
-        output_size = os.path.getsize(output_path)
-        print(f"Video trimmed by size: {output_size / 1024 / 1024:.1f}MB (target: {max_size_mb}MB)")
-        return True
-    except Exception as e:
-        print(f"Video trim by size failed: {e}")
-        return False
-
 
 # ---------- Upload ----------
 @app.route("/api/upload", methods=["POST"])
@@ -2944,33 +2949,6 @@ def api_upload():
         # Try Supabase Storage first (preferred)
         if _supabase_ok():
             try:
-                # Trim video if needed (reduce file size to 10MB)
-                if is_video:
-                    import tempfile
-                    with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as tmp_in:
-                        tmp_in.write(data)
-                        tmp_in.flush()
-                        tmp_in_path = tmp_in.name
-                    
-                    with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as tmp_out:
-                        tmp_out_path = tmp_out.name
-                    
-                    # Trim to 10MB
-                    if trim_video_by_size(tmp_in_path, tmp_out_path, max_size_mb=10):
-                        try:
-                            with open(tmp_out_path, 'rb') as trimmed_file:
-                                data = trimmed_file.read()
-                            print(f"Video trimmed to {len(data) / 1024 / 1024:.1f}MB")
-                        except Exception as e:
-                            print(f"Failed to read trimmed video: {e}")
-                    
-                    # Cleanup temp files
-                    try:
-                        os.unlink(tmp_in_path)
-                        os.unlink(tmp_out_path)
-                    except:
-                        pass
-                
                 file_id = uuid.uuid4().hex
                 file_ext = os.path.splitext(f.filename)[1] or ".bin"
                 file_path = f"posts/{file_id}{file_ext}"

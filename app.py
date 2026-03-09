@@ -38,16 +38,21 @@ app.config["SQLALCHEMY_DATABASE_URI"] = (
     else f"sqlite:///{os.path.join(APP_DIR, 'data', 'vibenet.db')}"
 )
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
-    "pool_size": 5,
-    "max_overflow": 10,
-    "pool_recycle": 300,  # Recycle connections every 5 minutes
-    "pool_pre_ping": True,  # Test connection before using
-    "connect_args": {
-        "connect_timeout": 30,
-        "application_name": "vibenet_app",
-    } if not DATABASE_URL.startswith("sqlite") else {},
-}
+
+# Only use connection pooling for PostgreSQL, not SQLite
+if DATABASE_URL and not DATABASE_URL.startswith("sqlite"):
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+        "pool_size": 5,
+        "max_overflow": 10,
+        "pool_recycle": 300,
+        "pool_pre_ping": True,
+        "connect_args": {
+            "connect_timeout": 30,
+            "application_name": "vibenet_app",
+        }
+    }
+else:
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {}
 
 os.makedirs(os.path.join(APP_DIR, "data"), exist_ok=True)
 

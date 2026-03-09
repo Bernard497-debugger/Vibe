@@ -1832,42 +1832,19 @@ window.addEventListener('load', async () => {
     const j = await res.json();
     if(j.user){ currentUser = j.user; onLogin(); }
   } catch(e) {}
-  
-  // Add event listeners as fallback
-  const tabSignup = byId('tabSignup');
-  const tabLogin = byId('tabLogin');
-  if(tabSignup) tabSignup.addEventListener('click', () => switchAuthTab('signup'));
-  if(tabLogin) tabLogin.addEventListener('click', () => switchAuthTab('login'));
 });
 
 function switchAuthTab(tab){
-  console.log('Switching to tab:', tab);
   const isSignup = tab === 'signup';
   const isLogin = tab === 'login';
-  
-  // Show/hide forms
-  const signupForm = byId('authSignup');
-  const loginForm = byId('authLogin');
-  if(signupForm) signupForm.style.display = isSignup ? 'block' : 'none';
-  if(loginForm) loginForm.style.display = isLogin ? 'block' : 'none';
-  
-  // Update tab styles
-  const tabSignup = byId('tabSignup');
-  const tabLogin = byId('tabLogin');
-  
-  if(tabSignup){
-    tabSignup.style.background = isSignup ? 'var(--accent)' : 'transparent';
-    tabSignup.style.color = isSignup ? '#060910' : 'var(--muted2)';
-    tabSignup.style.fontWeight = isSignup ? '700' : '600';
-  }
-  
-  if(tabLogin){
-    tabLogin.style.background = isLogin ? 'var(--accent)' : 'transparent';
-    tabLogin.style.color = isLogin ? '#060910' : 'var(--muted2)';
-    tabLogin.style.fontWeight = isLogin ? '700' : '600';
-  }
-  
-  console.log('Tab switch complete');
+  byId('authSignup').style.display = isSignup ? 'block' : 'none';
+  byId('authLogin').style.display  = isLogin ? 'block' : 'none';
+  byId('tabSignup').style.background = isSignup ? 'var(--accent)' : 'transparent';
+  byId('tabSignup').style.color      = isSignup ? '#060910' : 'var(--muted2)';
+  byId('tabSignup').style.fontWeight = isSignup ? '700' : '600';
+  byId('tabLogin').style.background  = isLogin ? 'var(--accent)' : 'transparent';
+  byId('tabLogin').style.color       = isLogin ? '#060910' : 'var(--muted2)';
+  byId('tabLogin').style.fontWeight  = isLogin ? '700' : '600';
 }
 
 async function signup(){
@@ -2422,34 +2399,6 @@ async function updateBio(){
   setTimeout(()=>saved.remove(), 2000);
 }
 
-async function loadMonetization(){
-  if(!currentUser) return;
-  try {
-    const r = await fetch(API+'/monetization/'+encodeURIComponent(currentUser.email));
-    const data = await r.json();
-    const el = byId('monetSection');
-    if(!el) return;
-    el.innerHTML = `
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
-        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px;text-align:center">
-          <div style="font-size:12px;color:var(--muted)">Followers</div>
-          <div style="font-size:22px;font-weight:800;color:var(--accent);margin-top:4px">${data.followers || 0}</div>
-        </div>
-        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px;text-align:center">
-          <div style="font-size:12px;color:var(--muted)">Watch Hours</div>
-          <div style="font-size:22px;font-weight:800;color:var(--accent);margin-top:4px">${data.watch_hours || 0}</div>
-        </div>
-      </div>
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:16px">
-        <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Total Earnings</div>
-        <div style="font-size:28px;font-weight:800;color:var(--accent)">P${(data.earnings || 0).toFixed(2)}</div>
-      </div>
-      ${data.eligible ? '<div style="background:rgba(77,240,192,0.1);border:1px solid rgba(77,240,192,0.3);border-radius:10px;padding:12px;color:var(--accent);font-size:13px;text-align:center">✓ You are eligible for monetization!</div>' : '<div style="background:rgba(255,107,107,0.1);border:1px solid rgba(255,107,107,0.3);border-radius:10px;padding:12px;color:#ff6b6b;font-size:13px;text-align:center">Need 1000+ followers & 4000+ watch hours</div>'}
-    `;
-  } catch(e) {
-    console.error('loadMonetization error:', e);
-  }
-}
 
 async function sendPhoneOTP(){
   if(!currentUser) return;
@@ -2850,59 +2799,6 @@ def api_me():
         return jsonify({"user": None})
     user = User.query.filter_by(email=email).first()
     return jsonify({"user": user.to_dict() if user else None})
-
-
-# ---------- Phone OTP ----------
-@app.route("/api/send-phone-otp", methods=["POST"])
-def api_send_phone_otp():
-    data = request.get_json() or {}
-    phone = data.get("phone", "").strip()
-    if not phone:
-        return jsonify({"error": "Phone number required"}), 400
-    
-    # Generate 6-digit OTP
-    import random
-    otp = str(random.randint(100000, 999999))
-    
-    # Store in session temporarily (in production, use Redis or cache)
-    session[f"otp_{phone}"] = otp
-    session.permanent = True
-    
-    # In production, send via SMS (Twilio, etc.)
-    # For now, just return success
-    print(f"DEBUG: OTP for {phone}: {otp}")
-    
-    return jsonify({"success": True, "message": "OTP sent to phone"})
-
-
-@app.route("/api/verify-phone-otp", methods=["POST"])
-def api_verify_phone_otp():
-    data = request.get_json() or {}
-    phone = data.get("phone", "").strip()
-    otp = data.get("otp", "").strip()
-    email = session.get("user_email")
-    
-    if not phone or not otp:
-        return jsonify({"error": "Phone and OTP required"}), 400
-    
-    if not email:
-        return jsonify({"error": "Not authenticated"}), 401
-    
-    # Check if OTP matches (stored in session)
-    stored_otp = session.get(f"otp_{phone}")
-    if not stored_otp or stored_otp != otp:
-        return jsonify({"error": "Invalid OTP"}), 400
-    
-    # Mark phone as verified
-    user = User.query.filter_by(email=email).first()
-    if user:
-        user.phone = phone
-        user.phone_verified = 1
-        db.session.commit()
-        session.pop(f"otp_{phone}", None)  # Clear OTP
-        return jsonify({"success": True, "user": user.to_dict()})
-    
-    return jsonify({"error": "User not found"}), 404
 
 
 # ---------- Upload ----------

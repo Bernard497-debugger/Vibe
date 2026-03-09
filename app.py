@@ -1515,8 +1515,8 @@ body::after {
     <div class="auth-forms" style="padding:0 24px 32px">
       <!-- Auth Tabs -->
       <div style="display:flex;background:rgba(255,255,255,0.04);border-radius:12px;padding:4px;margin-bottom:20px">
-        <button id="tabSignup" onclick="switchAuthTab('register')" style="flex:1;padding:10px;border:none;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;background:var(--accent);color:#060910;transition:all 0.2s">Create Account</button>
-        <button id="tabLogin" onclick="switchAuthTab('login')" style="flex:1;padding:10px;border:none;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer;background:transparent;color:var(--muted2);transition:all 0.2s">Sign In</button>
+        <button id="tabSignup" onclick="showAuthSection('register')" style="flex:1;padding:10px;border:none;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;background:var(--accent);color:#060910;transition:all 0.2s">Create Account</button>
+        <button id="tabLogin" onclick="showAuthSection('login')" style="flex:1;padding:10px;border:none;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer;background:transparent;color:var(--muted2);transition:all 0.2s">Sign In</button>
       </div>
 
       <!-- Signup Form -->
@@ -1543,7 +1543,7 @@ body::after {
           <input id="signupPic" type="file" accept="image/*" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--muted2);width:100%;font-size:13px;" />
         </div>
         <button class="btn-primary" onclick="signup()" style="width:100%;margin-top:4px;">Create Account →</button>
-        <div style="text-align:center;margin-top:14px;font-size:12px;color:#5a6a85">Already have an account? <span onclick="switchAuthTab('login')" style="color:var(--accent);cursor:pointer;font-weight:600">Sign In</span></div>
+        <div style="text-align:center;margin-top:14px;font-size:12px;color:#5a6a85">Already have an account? <span onclick="showAuthSection('login')" style="color:var(--accent);cursor:pointer;font-weight:600">Sign In</span></div>
       </div>
 
       <!-- Login Form -->
@@ -1557,7 +1557,7 @@ body::after {
           <input id="loginPassword" type="password" placeholder="••••••••" />
         </div>
         <button class="btn-primary" onclick="login()" style="width:100%;">Sign In →</button>
-        <div style="text-align:center;margin-top:14px;font-size:12px;color:#5a6a85">Don't have an account? <span onclick="switchAuthTab('register')" style="color:var(--accent);cursor:pointer;font-weight:600">Create one</span></div>
+        <div style="text-align:center;margin-top:14px;font-size:12px;color:#5a6a85">Don't have an account? <span onclick="showAuthSection('register')" style="color:var(--accent);cursor:pointer;font-weight:600">Create one</span></div>
       </div>
     </div>
   </div>
@@ -1808,25 +1808,25 @@ window.addEventListener('load', async () => {
   } catch(e) {}
 });
 
-function switchAuthTab(tab){
-  console.log('switchAuthTab called:', tab);
-  const loginSection = document.getElementById('loginSection');
-  const registerSection = document.getElementById('registerSection');
-  
-  if(!loginSection || !registerSection) {
-    console.error('Auth sections not found');
-    return;
-  }
-  
-  if (tab === 'register') {
-    loginSection.style.display = 'none';
-    registerSection.style.display = 'block';
-  } else {
-    loginSection.style.display = 'block';
-    registerSection.style.display = 'none';
-  }
-  
-  console.log('Tab switched to:', tab);
+function showAuthSection(section) {
+    console.log('showAuthSection called:', section);
+    const loginSection = document.getElementById('loginSection');
+    const registerSection = document.getElementById('registerSection');
+    
+    if(!loginSection || !registerSection) {
+        console.error('Auth sections not found');
+        return;
+    }
+    
+    if (section === 'register') {
+        loginSection.style.display = 'none';
+        registerSection.style.display = 'block';
+    } else {
+        loginSection.style.display = 'block';
+        registerSection.style.display = 'none';
+    }
+    
+    console.log('Section switched to:', section);
 }
 
 async function signup(){

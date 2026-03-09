@@ -1750,6 +1750,16 @@ body::after {
         <div class="monet-section-title">My Posts</div>
         <div id="profilePosts"></div>
 
+        <div class="monet-section-title" style="margin-top:24px">✉️ Email Verification</div>
+        <div style="background:rgba(100,200,255,0.04);border:1px solid rgba(100,200,255,0.15);border-radius:14px;padding:18px;margin-bottom:16px">
+          <div id="emailVerifyStatus" style="font-size:13px;color:#8899b4;margin-bottom:12px">Loading...</div>
+          <div id="emailVerifyForm" style="display:none">
+            <div style="font-size:13px;color:#c8d8f0;margin-bottom:14px">Verify your email address to unlock full access to VibeNet features.</div>
+            <button onclick="sendEmailVerification()" class="btn-primary" style="width:100%">Send Verification Email</button>
+            <div id="emailMsg" style="display:none;margin-top:10px;font-size:13px;line-height:1.6"></div>
+          </div>
+        </div>
+
         <div class="monet-section-title" style="margin-top:24px">📱 Phone Verification</div>
         <div style="background:rgba(100,200,255,0.04);border:1px solid rgba(100,200,255,0.15);border-radius:14px;padding:18px;margin-bottom:16px">
           <div id="phoneVerifyStatus" style="font-size:13px;color:#8899b4;margin-bottom:12px">Loading...</div>
@@ -1932,7 +1942,7 @@ function showTab(tab){
   byId(tab).classList.add('visible');
   if(navMap[tab]) byId(navMap[tab]).classList.add('active');
 
-  if(tab === 'profile'){ loadProfilePosts(); loadVerifiedStatus(); loadPhoneVerifyStatus(); }
+  if(tab === 'profile'){ loadProfilePosts(); loadVerifiedStatus(); loadEmailVerifyStatus(); loadPhoneVerifyStatus(); }
   if(tab === 'notifications') loadNotifications(true);
   if(tab === 'monet'){ loadMonetization(); loadAds();  }
 }
@@ -2397,6 +2407,39 @@ async function updateBio(){
   setTimeout(()=>saved.remove(), 2000);
 }
 
+async function sendEmailVerification(){
+  if(!currentUser) return;
+  const res = await fetch(API+'/send-verification-email', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({})
+  });
+  const j = await res.json();
+  
+  if(j.error){ alert('Error: '+j.error); return; }
+  
+  const msg = byId('emailMsg');
+  msg.style.display = 'block';
+  msg.style.color = '#4DF0C0';
+  msg.textContent = '✓ Verification email sent to '+currentUser.email+'. Check your inbox!';
+}
+
+async function loadEmailVerifyStatus(){
+  if(!currentUser) return;
+  const form = byId('emailVerifyForm');
+  const status = byId('emailVerifyStatus');
+  
+  if(currentUser.email_verified){
+    status.textContent = '✓ Your email is verified!';
+    status.style.color = '#4DF0C0';
+    form.style.display = 'none';
+  } else {
+    status.textContent = '⊗ Email not verified yet';
+    status.style.color = '#8899b4';
+    form.style.display = 'block';
+  }
+}
+
 async function sendPhoneOTP(){
   if(!currentUser) return;
   const phone = byId('phoneInput').value.trim();
@@ -2789,6 +2832,78 @@ def api_logout():
     return jsonify({"status": "logged out"})
 
 
+@app.route("/api/send-verification-email", methods=["POST"])
+def send_verification_email():
+    """Send verification email to user"""
+    email = session.get("user_email")
+    if not email:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    
+    if user.email_verified:
+        return jsonify({"error": "Email already verified"}), 400
+    
+    # Rate limiting: max 5 verification emails per day
+    recent_tokens = EmailVerificationToken.query.filter_by(email=email).all()
+    if len(recent_tokens) >= 5:
+        return jsonify({"error": "Too many verification requests. Try again later."}), 429
+    
+    # Generate secure token (expires in 24 hours)
+    token = uuid.uuid4().hex
+    expires_at = (datetime.datetime.utcnow() + datetime.timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Delete old tokens
+    EmailVerificationToken.query.filter_by(email=email).delete()
+    evt = EmailVerificationToken(email=email, token=token, expires_at=expires_at)
+    db.session.add(evt)
+    db.session.commit()
+    
+    verification_url = f"https://vibe-net-revm.onrender.com/verify-email?token={token}&email={email}"
+    
+    # TODO: Send via email service (SendGrid, AWS SES, etc)
+    print(f"[EMAIL] Verification link: {verification_url}")
+    
+    return jsonify({"success": True, "message": "Verification email sent"})
+
+
+@app.route("/api/verify-email", methods=["POST"])
+def verify_email():
+    """Verify email token"""
+    data = request.get_json() or {}
+    token = data.get("token", "").strip()
+    email = data.get("email", "").strip().lower()
+    
+    if not token or not email:
+        return jsonify({"error": "Token and email required"}), 400
+    
+    # Find and validate token
+    evt = EmailVerificationToken.query.filter_by(token=token, email=email).first()
+    if not evt:
+        return jsonify({"error": "Invalid token"}), 400
+    
+    # Check expiration
+    if evt.expires_at:
+        expires = datetime.datetime.strptime(evt.expires_at, "%Y-%m-%d %H:%M:%S")
+        if datetime.datetime.utcnow() > expires:
+            db.session.delete(evt)
+            db.session.commit()
+            return jsonify({"error": "Token expired"}), 400
+    
+    # Mark email as verified
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    
+    user.email_verified = 1
+    db.session.delete(evt)
+    db.session.commit()
+    
+    return jsonify({"success": True, "message": "Email verified!", "user": user.to_dict()})
+
+
 @app.route("/api/me")
 def api_me():
     email = session.get("user_email")
@@ -2796,6 +2911,7 @@ def api_me():
         return jsonify({"user": None})
     user = User.query.filter_by(email=email).first()
     return jsonify({"user": user.to_dict() if user else None})
+
 
 
 @app.route("/api/send-verification-email", methods=["POST"])

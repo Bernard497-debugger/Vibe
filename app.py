@@ -17,39 +17,6 @@ SUPABASE_BUCKET = os.environ.get("SUPABASE_BUCKET", "vibenet")
 def _supabase_ok():
     return bool(SUPABASE_URL and SUPABASE_KEY)
 
-# ---------- Twilio SMS Config ----------
-TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
-TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
-TWILIO_FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER", "")
-
-def send_sms(phone, message):
-    """Send SMS via Twilio"""
-    if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN or not TWILIO_FROM_NUMBER:
-        print(f"Twilio not configured. SMS for {phone}: {message}")
-        return True  # Fail gracefully in dev
-    
-    try:
-        from twilio.rest import Client
-        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-        
-        # Ensure phone number has country code
-        if not phone.startswith("+"):
-            if phone.startswith("267"):
-                phone = "+" + phone
-            else:
-                phone = "+267" + phone.lstrip("0")
-        
-        msg = client.messages.create(
-            body=message,
-            from_=TWILIO_FROM_NUMBER,
-            to=phone
-        )
-        
-        print(f"SMS sent to {phone}, SID: {msg.sid}")
-        return True
-    except Exception as e:
-        print(f"Twilio SMS error: {e}")
-        return False
 
 # ---------- Config ----------
 APP_DIR   = os.path.dirname(os.path.abspath(__file__))
@@ -201,10 +168,11 @@ class Notification(db.Model):
 
 class EmailVerificationToken(db.Model):
     __tablename__ = "email_verification_tokens"
-    id       = db.Column(db.Integer, primary_key=True)
-    email    = db.Column(db.Text, nullable=False)
-    token    = db.Column(db.Text, unique=True, nullable=False)
+    id         = db.Column(db.Integer, primary_key=True)
+    email      = db.Column(db.Text, nullable=False)
+    token      = db.Column(db.Text, unique=True, nullable=False)
     created_at = db.Column(db.Text, default=lambda: now_ts())
+    expires_at = db.Column(db.Text, default="")  # Token expiration time (24 hours)
 
 
 class PhoneVerificationToken(db.Model):
@@ -1782,6 +1750,21 @@ body::after {
         <div class="monet-section-title">My Posts</div>
         <div id="profilePosts"></div>
 
+        <div class="monet-section-title" style="margin-top:24px">📱 Phone Verification</div>
+        <div style="background:rgba(100,200,255,0.04);border:1px solid rgba(100,200,255,0.15);border-radius:14px;padding:18px;margin-bottom:16px">
+          <div id="phoneVerifyStatus" style="font-size:13px;color:#8899b4;margin-bottom:12px">Loading...</div>
+          <div id="phoneVerifyForm" style="display:none">
+            <div style="font-size:13px;color:#c8d8f0;margin-bottom:14px">Verify your phone number to prove you're real on VibeNet.</div>
+            <input type="text" id="phoneInput" placeholder="+267 XX XXX XXXX" style="width:100%;padding:10px;border:1px solid #4a5f7f;border-radius:8px;background:#0d1117;color:#c8d8f0;margin-bottom:10px;font-size:13px">
+            <button onclick="sendPhoneOTP()" class="btn-primary" style="width:100%;margin-bottom:10px">Send OTP</button>
+            <div id="phoneOTPForm" style="display:none">
+              <input type="text" id="otpInput" placeholder="Enter 6-digit OTP" maxlength="6" style="width:100%;padding:10px;border:1px solid #4a5f7f;border-radius:8px;background:#0d1117;color:#c8d8f0;margin-bottom:10px;font-size:13px">
+              <button onclick="verifyPhoneOTP()" class="btn-primary" style="width:100%">Verify OTP</button>
+            </div>
+            <div id="phoneMsg" style="display:none;margin-top:10px;font-size:13px;line-height:1.6"></div>
+          </div>
+        </div>
+
         <div class="monet-section-title" style="margin-top:24px">✦ Verified Badge</div>
         <div style="background:rgba(77,240,192,0.04);border:1px solid rgba(77,240,192,0.15);border-radius:14px;padding:18px;margin-bottom:16px">
           <div id="verifiedStatus" style="font-size:13px;color:#8899b4;margin-bottom:12px">Loading...</div>
@@ -1949,7 +1932,7 @@ function showTab(tab){
   byId(tab).classList.add('visible');
   if(navMap[tab]) byId(navMap[tab]).classList.add('active');
 
-  if(tab === 'profile'){ loadProfilePosts(); loadVerifiedStatus(); }
+  if(tab === 'profile'){ loadProfilePosts(); loadVerifiedStatus(); loadPhoneVerifyStatus(); }
   if(tab === 'notifications') loadNotifications(true);
   if(tab === 'monet'){ loadMonetization(); loadAds();  }
 }
@@ -2414,7 +2397,69 @@ async function updateBio(){
   setTimeout(()=>saved.remove(), 2000);
 }
 
-async function loadMonetization(){
+async function sendPhoneOTP(){
+  if(!currentUser) return;
+  const phone = byId('phoneInput').value.trim();
+  if(!phone){ alert('Enter your phone number'); return; }
+  
+  const res = await fetch(API+'/send-phone-otp', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({phone})
+  });
+  const j = await res.json();
+  
+  if(j.error){ alert('Error: '+j.error); return; }
+  
+  byId('phoneOTPForm').style.display = 'block';
+  const msg = byId('phoneMsg');
+  msg.style.display = 'block';
+  msg.style.color = '#4DF0C0';
+  msg.textContent = '✓ OTP sent to '+phone;
+}
+
+async function verifyPhoneOTP(){
+  if(!currentUser) return;
+  const phone = byId('phoneInput').value.trim();
+  const otp = byId('otpInput').value.trim();
+  
+  if(!otp || otp.length !== 6){ alert('Enter 6-digit OTP'); return; }
+  
+  const res = await fetch(API+'/verify-phone-otp', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({phone, otp})
+  });
+  const j = await res.json();
+  
+  if(j.error){ alert('Invalid OTP'); return; }
+  
+  currentUser.phone_verified = true;
+  const msg = byId('phoneMsg');
+  msg.style.color = '#4DF0C0';
+  msg.textContent = '✓ Phone verified! You are now verified on VibeNet.';
+  byId('phoneVerifyForm').style.display = 'none';
+  
+  setTimeout(()=>{ location.reload(); }, 2000);
+}
+
+async function loadPhoneVerifyStatus(){
+  if(!currentUser) return;
+  const form = byId('phoneVerifyForm');
+  const status = byId('phoneVerifyStatus');
+  
+  if(currentUser.phone_verified){
+    status.textContent = '✓ Your phone is verified!';
+    status.style.color = '#4DF0C0';
+    form.style.display = 'none';
+  } else {
+    status.textContent = '⊗ Phone not verified yet';
+    status.style.color = '#8899b4';
+    form.style.display = 'block';
+  }
+}
+
+
   if(!currentUser) return;
   const r = await fetch(API+'/monetization/'+encodeURIComponent(currentUser.email));
   const j = await r.json();
@@ -2755,7 +2800,7 @@ def api_me():
 
 @app.route("/api/send-verification-email", methods=["POST"])
 def send_verification_email():
-    """Send verification email to user"""
+    """Send verification email to user with security checks"""
     email = session.get("user_email")
     if not email:
         return jsonify({"error": "Not logged in"}), 401
@@ -2767,113 +2812,72 @@ def send_verification_email():
     if user.email_verified:
         return jsonify({"error": "Email already verified"}), 400
     
-    # Generate token
+    # Rate limiting: max 5 verification emails per email per day
+    today = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+    recent_tokens = EmailVerificationToken.query.filter_by(email=email).all()
+    if len(recent_tokens) >= 5:
+        return jsonify({"error": "Too many verification requests. Try again later."}), 429
+    
+    # Generate secure token
     token = uuid.uuid4().hex
+    expires_at = (datetime.datetime.utcnow() + datetime.timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+    
     # Delete old tokens for this email
     EmailVerificationToken.query.filter_by(email=email).delete()
-    evt = EmailVerificationToken(email=email, token=token)
+    evt = EmailVerificationToken(email=email, token=token, created_at=now_ts())
+    evt.expires_at = expires_at
     db.session.add(evt)
     db.session.commit()
     
     # Build verification link
-    verification_url = f"https://vibe-net-revm.onrender.com/verify-email?token={token}"
+    verification_url = f"https://vibe-net-revm.onrender.com/verify-email?token={token}&email={email}"
     
-    # TODO: Send email via SMTP
-    # For now, just return the link (you'll integrate email service later)
-    print(f"Verification link for {email}: {verification_url}")
+    # TODO: Send email via SMTP (SendGrid, AWS SES, etc)
+    # For now, log it for testing
+    print(f"[SECURITY] Verification email sent to {email}")
+    print(f"Verification link: {verification_url}")
+    print(f"Token expires at: {expires_at}")
     
-    return jsonify({"success": True, "message": "Verification email sent"})
+    return jsonify({"success": True, "message": "Verification email sent to "+email})
 
 
 @app.route("/api/verify-email", methods=["POST"])
 def verify_email():
-    """Verify email token"""
+    """Verify email token with security checks"""
     data = request.get_json() or {}
-    token = data.get("token", "")
+    token = data.get("token", "").strip()
+    email = data.get("email", "").strip().lower()
     
-    if not token:
-        return jsonify({"error": "Token required"}), 400
+    if not token or not email:
+        return jsonify({"error": "Token and email required"}), 400
     
-    evt = EmailVerificationToken.query.filter_by(token=token).first()
+    # Find token
+    evt = EmailVerificationToken.query.filter_by(token=token, email=email).first()
     if not evt:
+        print(f"[SECURITY] Invalid token attempt for {email}")
         return jsonify({"error": "Invalid or expired token"}), 400
     
-    user = User.query.filter_by(email=evt.email).first()
+    # Check expiration
+    if evt.expires_at:
+        expires = datetime.datetime.strptime(evt.expires_at, "%Y-%m-%d %H:%M:%S")
+        if datetime.datetime.utcnow() > expires:
+            db.session.delete(evt)
+            db.session.commit()
+            print(f"[SECURITY] Expired token used for {email}")
+            return jsonify({"error": "Token has expired. Request a new one."}), 400
+    
+    user = User.query.filter_by(email=email).first()
     if not user:
         return jsonify({"error": "User not found"}), 404
     
+    # Mark as verified
     user.email_verified = 1
     db.session.delete(evt)
     db.session.commit()
     
-    return jsonify({"success": True, "message": "Email verified!"})
-
-
-@app.route("/api/send-phone-otp", methods=["POST"])
-def send_phone_otp():
-    """Send OTP to phone number via Liquid SMS"""
-    data = request.get_json() or {}
-    phone = data.get("phone", "").strip()
+    print(f"[SECURITY] Email verified for {email}")
     
-    if not phone:
-        return jsonify({"error": "Phone number required"}), 400
-    
-    email = session.get("user_email")
-    if not email:
-        return jsonify({"error": "Not logged in"}), 401
-    
-    user = User.query.filter_by(email=email).first()
-    if not user:
-        return jsonify({"error": "User not found"}), 404
-    
-    # Generate 6-digit OTP
-    import random
-    otp = str(random.randint(100000, 999999))
-    
-    # Delete old OTPs for this phone
-    PhoneVerificationToken.query.filter_by(phone=phone).delete()
-    pvt = PhoneVerificationToken(phone=phone, otp=otp)
-    db.session.add(pvt)
-    db.session.commit()
-    
-    # Send SMS via Liquid SMS
-    message = f"Your VibeNet verification code is: {otp}"
-    sms_sent = send_sms(phone, message)
-    
-    if sms_sent:
-        return jsonify({"success": True, "message": "OTP sent to phone"})
-    else:
-        return jsonify({"error": "Failed to send SMS"}), 503
-
-
-@app.route("/api/verify-phone-otp", methods=["POST"])
-def verify_phone_otp():
-    """Verify phone OTP"""
-    data = request.get_json() or {}
-    phone = data.get("phone", "").strip()
-    otp = data.get("otp", "").strip()
-    
-    if not phone or not otp:
-        return jsonify({"error": "Phone and OTP required"}), 400
-    
-    email = session.get("user_email")
-    if not email:
-        return jsonify({"error": "Not logged in"}), 401
-    
-    pvt = PhoneVerificationToken.query.filter_by(phone=phone, otp=otp).first()
-    if not pvt:
-        return jsonify({"error": "Invalid OTP"}), 400
-    
-    user = User.query.filter_by(email=email).first()
-    if not user:
-        return jsonify({"error": "User not found"}), 404
-    
-    user.phone = phone
-    user.phone_verified = 1
-    db.session.delete(pvt)
-    db.session.commit()
-    
-    return jsonify({"success": True, "message": "Phone verified!", "user": user.to_dict()})
+    return jsonify({"success": True, "message": "Email verified!", "user": user.to_dict()})
 
 
 

@@ -1843,17 +1843,33 @@ async function signup(){
   let profilePicUrl = '';
   const pic = byId('signupPic').files[0];
   if(pic){
-    try { profilePicUrl = await uploadFile(pic, 'vibenet/avatars'); }
-    catch(e) { console.warn('Profile pic upload failed:', e); }
+    try { 
+      const result = await uploadFile(pic, 'vibenet/avatars');
+      profilePicUrl = result.url || '';
+    }
+    catch(e) { 
+      console.warn('Profile pic upload failed:', e);
+      // Don't fail signup if profile pic upload fails
+    }
   }
 
-  const res = await fetch(API + '/signup', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ name, email, password, profile_pic: profilePicUrl })
-  });
-  const j = await res.json();
-  if(j.user){ currentUser = j.user; onLogin(); } else alert(j.error || j.message);
+  try {
+    const res = await fetch(API + '/signup', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ name, email, password, profile_pic: profilePicUrl })
+    });
+    const j = await res.json();
+    if(j.user || j.success){ 
+      currentUser = j.user; 
+      onLogin(); 
+    } else { 
+      alert(j.error || j.message || 'Signup failed'); 
+    }
+  } catch(e) {
+    console.error('Signup error:', e);
+    alert('Signup failed: ' + e.message);
+  }
 }
 
 async function login(){

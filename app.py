@@ -1835,16 +1835,22 @@ window.addEventListener('load', async () => {
 });
 
 function switchAuthTab(tab){
+  console.log('switchAuthTab called with:', tab);
   const isSignup = tab === 'signup';
   const isLogin = tab === 'login';
-  byId('authSignup').style.display = isSignup ? 'block' : 'none';
-  byId('authLogin').style.display  = isLogin ? 'block' : 'none';
-  byId('tabSignup').style.background = isSignup ? 'var(--accent)' : 'transparent';
-  byId('tabSignup').style.color      = isSignup ? '#060910' : 'var(--muted2)';
-  byId('tabSignup').style.fontWeight = isSignup ? '700' : '600';
-  byId('tabLogin').style.background  = isLogin ? 'var(--accent)' : 'transparent';
-  byId('tabLogin').style.color       = isLogin ? '#060910' : 'var(--muted2)';
-  byId('tabLogin').style.fontWeight  = isLogin ? '700' : '600';
+  
+  try {
+    byId('authSignup').style.display = isSignup ? 'block' : 'none';
+    byId('authLogin').style.display  = isLogin ? 'block' : 'none';
+    byId('tabSignup').style.background = isSignup ? 'var(--accent)' : 'transparent';
+    byId('tabSignup').style.color      = isSignup ? '#060910' : 'var(--muted2)';
+    byId('tabSignup').style.fontWeight = isSignup ? '700' : '600';
+    byId('tabLogin').style.background  = isLogin ? 'var(--accent)' : 'transparent';
+    byId('tabLogin').style.color       = isLogin ? '#060910' : 'var(--muted2)';
+    byId('tabLogin').style.fontWeight  = isLogin ? '700' : '600';
+  } catch(e) {
+    console.error('switchAuthTab error:', e);
+  }
 }
 
 async function signup(){
@@ -2740,6 +2746,10 @@ async function refreshAll(){ await loadFeed(true); await loadNotifications(); aw
 @app.route("/")
 def index():
     return render_template_string(HTML)
+
+@app.route("/favicon.ico")
+def favicon():
+    return "", 204
 
 @app.route("/privacy")
 def privacy_page():

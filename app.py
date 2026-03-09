@@ -3635,15 +3635,6 @@ def api_admin_approve_verified(vreq_id):
     db.session.commit()
     return redirect("/admin") if request.form else jsonify({"success":True})
 
-@app.route("/api/admin/wipe-posts", methods=["POST"])
-def api_admin_wipe_posts():
-    if not require_admin(): return jsonify({"error":"Unauthorized"}), 403
-    data = request.get_json() or {}
-    if data.get("confirm") != "WIPE": return jsonify({"error":"Send confirm=WIPE"}), 400
-    UserReaction.query.delete()
-    Post.query.delete()
-    db.session.commit()
-    return jsonify({"success":True})
 
 # ══════════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":

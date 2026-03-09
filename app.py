@@ -166,23 +166,6 @@ class Notification(db.Model):
         return {"id": self.id, "text": self.text, "timestamp": self.timestamp, "seen": self.seen}
 
 
-class EmailVerificationToken(db.Model):
-    __tablename__ = "email_verification_tokens"
-    id         = db.Column(db.Integer, primary_key=True)
-    email      = db.Column(db.Text, nullable=False)
-    token      = db.Column(db.Text, unique=True, nullable=False)
-    created_at = db.Column(db.Text, default=lambda: now_ts())
-    expires_at = db.Column(db.Text, default="")  # Token expiration time (24 hours)
-
-
-class PhoneVerificationToken(db.Model):
-    __tablename__ = "phone_verification_tokens"
-    id        = db.Column(db.Integer, primary_key=True)
-    phone     = db.Column(db.Text, nullable=False)
-    otp       = db.Column(db.Text, nullable=False)  # 6-digit code
-    created_at = db.Column(db.Text, default=lambda: now_ts())
-
-
 class Ad(db.Model):
     __tablename__ = "ads"
     id               = db.Column(db.Integer, primary_key=True)
@@ -1751,20 +1734,6 @@ body::after {
         <div id="profilePosts"></div>
 
 
-        <div class="monet-section-title" style="margin-top:24px">📱 Phone Verification</div>
-        <div style="background:rgba(100,200,255,0.04);border:1px solid rgba(100,200,255,0.15);border-radius:14px;padding:18px;margin-bottom:16px">
-          <div id="phoneVerifyStatus" style="font-size:13px;color:#8899b4;margin-bottom:12px">Loading...</div>
-          <div id="phoneVerifyForm" style="display:none">
-            <div style="font-size:13px;color:#c8d8f0;margin-bottom:14px">Verify your phone number to prove you're real on VibeNet.</div>
-            <input type="text" id="phoneInput" placeholder="+267 XX XXX XXXX" style="width:100%;padding:10px;border:1px solid #4a5f7f;border-radius:8px;background:#0d1117;color:#c8d8f0;margin-bottom:10px;font-size:13px">
-            <button onclick="sendPhoneOTP()" class="btn-primary" style="width:100%;margin-bottom:10px">Send OTP</button>
-            <div id="phoneOTPForm" style="display:none">
-              <input type="text" id="otpInput" placeholder="Enter 6-digit OTP" maxlength="6" style="width:100%;padding:10px;border:1px solid #4a5f7f;border-radius:8px;background:#0d1117;color:#c8d8f0;margin-bottom:10px;font-size:13px">
-              <button onclick="verifyPhoneOTP()" class="btn-primary" style="width:100%">Verify OTP</button>
-            </div>
-            <div id="phoneMsg" style="display:none;margin-top:10px;font-size:13px;line-height:1.6"></div>
-          </div>
-        </div>
 
         <div class="monet-section-title" style="margin-top:24px">✦ Verified Badge</div>
         <div style="background:rgba(77,240,192,0.04);border:1px solid rgba(77,240,192,0.15);border-radius:14px;padding:18px;margin-bottom:16px">
@@ -1934,7 +1903,7 @@ function showTab(tab){
   byId(tab).classList.add('visible');
   if(navMap[tab]) byId(navMap[tab]).classList.add('active');
 
-  if(tab === 'profile'){ loadProfilePosts(); loadVerifiedStatus(); loadPhoneVerifyStatus(); }
+  if(tab === 'profile'){ loadProfilePosts(); loadVerifiedStatus(); }
   if(tab === 'notifications') loadNotifications(true);
   if(tab === 'monet'){ loadMonetization(); loadAds();  }
 }
@@ -2399,68 +2368,6 @@ async function updateBio(){
   setTimeout(()=>saved.remove(), 2000);
 }
 
-
-async function sendPhoneOTP(){
-  if(!currentUser) return;
-  const phone = byId('phoneInput').value.trim();
-  if(!phone){ alert('Enter your phone number'); return; }
-  
-  const res = await fetch(API+'/send-phone-otp', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({phone})
-  });
-  const j = await res.json();
-  
-  if(j.error){ alert('Error: '+j.error); return; }
-  
-  byId('phoneOTPForm').style.display = 'block';
-  const msg = byId('phoneMsg');
-  msg.style.display = 'block';
-  msg.style.color = '#4DF0C0';
-  msg.textContent = '✓ OTP sent to '+phone;
-}
-
-async function verifyPhoneOTP(){
-  if(!currentUser) return;
-  const phone = byId('phoneInput').value.trim();
-  const otp = byId('otpInput').value.trim();
-  
-  if(!otp || otp.length !== 6){ alert('Enter 6-digit OTP'); return; }
-  
-  const res = await fetch(API+'/verify-phone-otp', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({phone, otp})
-  });
-  const j = await res.json();
-  
-  if(j.error){ alert('Invalid OTP'); return; }
-  
-  currentUser.phone_verified = true;
-  const msg = byId('phoneMsg');
-  msg.style.color = '#4DF0C0';
-  msg.textContent = '✓ Phone verified! You are now verified on VibeNet.';
-  byId('phoneVerifyForm').style.display = 'none';
-  
-  setTimeout(()=>{ location.reload(); }, 2000);
-}
-
-async function loadPhoneVerifyStatus(){
-  if(!currentUser) return;
-  const form = byId('phoneVerifyForm');
-  const status = byId('phoneVerifyStatus');
-  
-  if(currentUser.phone_verified){
-    status.textContent = '✓ Your phone is verified!';
-    status.style.color = '#4DF0C0';
-    form.style.display = 'none';
-  } else {
-    status.textContent = '⊗ Phone not verified yet';
-    status.style.color = '#8899b4';
-    form.style.display = 'block';
-  }
-}
 
 
   if(!currentUser) return;

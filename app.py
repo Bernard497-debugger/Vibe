@@ -1832,19 +1832,42 @@ window.addEventListener('load', async () => {
     const j = await res.json();
     if(j.user){ currentUser = j.user; onLogin(); }
   } catch(e) {}
+  
+  // Add event listeners as fallback
+  const tabSignup = byId('tabSignup');
+  const tabLogin = byId('tabLogin');
+  if(tabSignup) tabSignup.addEventListener('click', () => switchAuthTab('signup'));
+  if(tabLogin) tabLogin.addEventListener('click', () => switchAuthTab('login'));
 });
 
 function switchAuthTab(tab){
+  console.log('Switching to tab:', tab);
   const isSignup = tab === 'signup';
   const isLogin = tab === 'login';
-  byId('authSignup').style.display = isSignup ? 'block' : 'none';
-  byId('authLogin').style.display  = isLogin ? 'block' : 'none';
-  byId('tabSignup').style.background = isSignup ? 'var(--accent)' : 'transparent';
-  byId('tabSignup').style.color      = isSignup ? '#060910' : 'var(--muted2)';
-  byId('tabSignup').style.fontWeight = isSignup ? '700' : '600';
-  byId('tabLogin').style.background  = isLogin ? 'var(--accent)' : 'transparent';
-  byId('tabLogin').style.color       = isLogin ? '#060910' : 'var(--muted2)';
-  byId('tabLogin').style.fontWeight  = isLogin ? '700' : '600';
+  
+  // Show/hide forms
+  const signupForm = byId('authSignup');
+  const loginForm = byId('authLogin');
+  if(signupForm) signupForm.style.display = isSignup ? 'block' : 'none';
+  if(loginForm) loginForm.style.display = isLogin ? 'block' : 'none';
+  
+  // Update tab styles
+  const tabSignup = byId('tabSignup');
+  const tabLogin = byId('tabLogin');
+  
+  if(tabSignup){
+    tabSignup.style.background = isSignup ? 'var(--accent)' : 'transparent';
+    tabSignup.style.color = isSignup ? '#060910' : 'var(--muted2)';
+    tabSignup.style.fontWeight = isSignup ? '700' : '600';
+  }
+  
+  if(tabLogin){
+    tabLogin.style.background = isLogin ? 'var(--accent)' : 'transparent';
+    tabLogin.style.color = isLogin ? '#060910' : 'var(--muted2)';
+    tabLogin.style.fontWeight = isLogin ? '700' : '600';
+  }
+  
+  console.log('Tab switch complete');
 }
 
 async function signup(){
@@ -2827,6 +2850,59 @@ def api_me():
         return jsonify({"user": None})
     user = User.query.filter_by(email=email).first()
     return jsonify({"user": user.to_dict() if user else None})
+
+
+# ---------- Phone OTP ----------
+@app.route("/api/send-phone-otp", methods=["POST"])
+def api_send_phone_otp():
+    data = request.get_json() or {}
+    phone = data.get("phone", "").strip()
+    if not phone:
+        return jsonify({"error": "Phone number required"}), 400
+    
+    # Generate 6-digit OTP
+    import random
+    otp = str(random.randint(100000, 999999))
+    
+    # Store in session temporarily (in production, use Redis or cache)
+    session[f"otp_{phone}"] = otp
+    session.permanent = True
+    
+    # In production, send via SMS (Twilio, etc.)
+    # For now, just return success
+    print(f"DEBUG: OTP for {phone}: {otp}")
+    
+    return jsonify({"success": True, "message": "OTP sent to phone"})
+
+
+@app.route("/api/verify-phone-otp", methods=["POST"])
+def api_verify_phone_otp():
+    data = request.get_json() or {}
+    phone = data.get("phone", "").strip()
+    otp = data.get("otp", "").strip()
+    email = session.get("user_email")
+    
+    if not phone or not otp:
+        return jsonify({"error": "Phone and OTP required"}), 400
+    
+    if not email:
+        return jsonify({"error": "Not authenticated"}), 401
+    
+    # Check if OTP matches (stored in session)
+    stored_otp = session.get(f"otp_{phone}")
+    if not stored_otp or stored_otp != otp:
+        return jsonify({"error": "Invalid OTP"}), 400
+    
+    # Mark phone as verified
+    user = User.query.filter_by(email=email).first()
+    if user:
+        user.phone = phone
+        user.phone_verified = 1
+        db.session.commit()
+        session.pop(f"otp_{phone}", None)  # Clear OTP
+        return jsonify({"success": True, "user": user.to_dict()})
+    
+    return jsonify({"error": "User not found"}), 404
 
 
 # ---------- Upload ----------

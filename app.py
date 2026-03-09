@@ -2399,6 +2399,34 @@ async function updateBio(){
   setTimeout(()=>saved.remove(), 2000);
 }
 
+async function loadMonetization(){
+  if(!currentUser) return;
+  try {
+    const r = await fetch(API+'/monetization/'+encodeURIComponent(currentUser.email));
+    const data = await r.json();
+    const el = byId('monetSection');
+    if(!el) return;
+    el.innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px;text-align:center">
+          <div style="font-size:12px;color:var(--muted)">Followers</div>
+          <div style="font-size:22px;font-weight:800;color:var(--accent);margin-top:4px">${data.followers || 0}</div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px;text-align:center">
+          <div style="font-size:12px;color:var(--muted)">Watch Hours</div>
+          <div style="font-size:22px;font-weight:800;color:var(--accent);margin-top:4px">${data.watch_hours || 0}</div>
+        </div>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:16px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Total Earnings</div>
+        <div style="font-size:28px;font-weight:800;color:var(--accent)">P${(data.earnings || 0).toFixed(2)}</div>
+      </div>
+      ${data.eligible ? '<div style="background:rgba(77,240,192,0.1);border:1px solid rgba(77,240,192,0.3);border-radius:10px;padding:12px;color:var(--accent);font-size:13px;text-align:center">✓ You are eligible for monetization!</div>' : '<div style="background:rgba(255,107,107,0.1);border:1px solid rgba(255,107,107,0.3);border-radius:10px;padding:12px;color:#ff6b6b;font-size:13px;text-align:center">Need 1000+ followers & 4000+ watch hours</div>'}
+    `;
+  } catch(e) {
+    console.error('loadMonetization error:', e);
+  }
+}
 
 async function sendPhoneOTP(){
   if(!currentUser) return;

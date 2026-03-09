@@ -1836,14 +1836,15 @@ window.addEventListener('load', async () => {
 
 function switchAuthTab(tab){
   const isSignup = tab === 'signup';
+  const isLogin = tab === 'login';
   byId('authSignup').style.display = isSignup ? 'block' : 'none';
-  byId('authLogin').style.display  = isSignup ? 'none'  : 'block';
+  byId('authLogin').style.display  = isLogin ? 'block' : 'none';
   byId('tabSignup').style.background = isSignup ? 'var(--accent)' : 'transparent';
   byId('tabSignup').style.color      = isSignup ? '#060910' : 'var(--muted2)';
   byId('tabSignup').style.fontWeight = isSignup ? '700' : '600';
-  byId('tabLogin').style.background  = isSignup ? 'transparent' : 'var(--accent)';
-  byId('tabLogin').style.color       = isSignup ? 'var(--muted2)' : '#060910';
-  byId('tabLogin').style.fontWeight  = isSignup ? '600' : '700';
+  byId('tabLogin').style.background  = isLogin ? 'var(--accent)' : 'transparent';
+  byId('tabLogin').style.color       = isLogin ? '#060910' : 'var(--muted2)';
+  byId('tabLogin').style.fontWeight  = isLogin ? '700' : '600';
 }
 
 async function signup(){

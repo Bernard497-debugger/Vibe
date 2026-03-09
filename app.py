@@ -1515,12 +1515,12 @@ body::after {
     <div class="auth-forms" style="padding:0 24px 32px">
       <!-- Auth Tabs -->
       <div style="display:flex;background:rgba(255,255,255,0.04);border-radius:12px;padding:4px;margin-bottom:20px">
-        <button id="tabSignup" onclick="switchAuthTab('signup')" style="flex:1;padding:10px;border:none;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;background:var(--accent);color:#060910;transition:all 0.2s">Create Account</button>
+        <button id="tabSignup" onclick="switchAuthTab('register')" style="flex:1;padding:10px;border:none;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;background:var(--accent);color:#060910;transition:all 0.2s">Create Account</button>
         <button id="tabLogin" onclick="switchAuthTab('login')" style="flex:1;padding:10px;border:none;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer;background:transparent;color:var(--muted2);transition:all 0.2s">Sign In</button>
       </div>
 
       <!-- Signup Form -->
-      <div id="authSignup">
+      <div id="registerSection">
         <div class="field">
           <div class="field-label">Full Name</div>
           <input id="signupName" placeholder="Your name" />
@@ -1547,7 +1547,7 @@ body::after {
       </div>
 
       <!-- Login Form -->
-      <div id="authLogin" style="display:none">
+      <div id="loginSection" style="display:none">
         <div class="field">
           <div class="field-label">Email</div>
           <input id="loginEmail" type="email" placeholder="you@email.com" />
@@ -1557,7 +1557,7 @@ body::after {
           <input id="loginPassword" type="password" placeholder="••••••••" />
         </div>
         <button class="btn-primary" onclick="login()" style="width:100%;">Sign In →</button>
-        <div style="text-align:center;margin-top:14px;font-size:12px;color:#5a6a85">Don't have an account? <span onclick="switchAuthTab('signup')" style="color:var(--accent);cursor:pointer;font-weight:600">Create one</span></div>
+        <div style="text-align:center;margin-top:14px;font-size:12px;color:#5a6a85">Don't have an account? <span onclick="switchAuthTab('register')" style="color:var(--accent);cursor:pointer;font-weight:600">Create one</span></div>
       </div>
     </div>
   </div>
@@ -1809,16 +1809,24 @@ window.addEventListener('load', async () => {
 });
 
 function switchAuthTab(tab){
-  const isSignup = tab === 'signup';
-  const isLogin = tab === 'login';
-  byId('authSignup').style.display = isSignup ? 'block' : 'none';
-  byId('authLogin').style.display  = isLogin ? 'block' : 'none';
-  byId('tabSignup').style.background = isSignup ? 'var(--accent)' : 'transparent';
-  byId('tabSignup').style.color      = isSignup ? '#060910' : 'var(--muted2)';
-  byId('tabSignup').style.fontWeight = isSignup ? '700' : '600';
-  byId('tabLogin').style.background  = isLogin ? 'var(--accent)' : 'transparent';
-  byId('tabLogin').style.color       = isLogin ? '#060910' : 'var(--muted2)';
-  byId('tabLogin').style.fontWeight  = isLogin ? '700' : '600';
+  console.log('switchAuthTab called:', tab);
+  const loginSection = document.getElementById('loginSection');
+  const registerSection = document.getElementById('registerSection');
+  
+  if(!loginSection || !registerSection) {
+    console.error('Auth sections not found');
+    return;
+  }
+  
+  if (tab === 'register') {
+    loginSection.style.display = 'none';
+    registerSection.style.display = 'block';
+  } else {
+    loginSection.style.display = 'block';
+    registerSection.style.display = 'none';
+  }
+  
+  console.log('Tab switched to:', tab);
 }
 
 async function signup(){

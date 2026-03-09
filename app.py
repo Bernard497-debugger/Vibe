@@ -2160,48 +2160,6 @@ function createPostElement(p){
       v.style.background = '#0d1117';
       if(p.thumbnail_url) v.poster = p.thumbnail_url;
 
-      // Show thumbnail image by default (works on all browsers including Facebook Lite)
-      const thumbImg = document.createElement('img');
-      let showingThumbnail = false;
-      
-      if(p.thumbnail_url){
-        thumbImg.src = p.thumbnail_url;
-        thumbImg.style.width = '100%';
-        thumbImg.style.height = 'auto';
-        thumbImg.style.display = 'block';
-        thumbImg.style.cursor = 'pointer';
-        thumbImg.style.backgroundColor = '#0d1117';
-        showingThumbnail = true;
-      }
-      
-      const playOverlay = document.createElement('div');
-      playOverlay.style.position = 'absolute';
-      playOverlay.style.top = '0';
-      playOverlay.style.left = '0';
-      playOverlay.style.width = '100%';
-      playOverlay.style.height = '100%';
-      playOverlay.style.display = showingThumbnail ? 'flex' : 'none';
-      playOverlay.style.alignItems = 'center';
-      playOverlay.style.justifyContent = 'center';
-      playOverlay.style.backgroundColor = 'rgba(0,0,0,0.3)';
-      playOverlay.style.cursor = 'pointer';
-      playOverlay.innerHTML = '<span style="font-size:60px;color:white;text-shadow:0 0 10px rgba(0,0,0,0.7)">▶</span>';
-      
-      wrap.style.position = 'relative';
-      
-      const switchToVideo = () => {
-        if(showingThumbnail){
-          thumbImg.style.display = 'none';
-          playOverlay.style.display = 'none';
-          v.style.display = 'block';
-          showingThumbnail = false;
-          v.play();
-        }
-      };
-      
-      thumbImg.addEventListener('click', switchToVideo);
-      playOverlay.addEventListener('click', switchToVideo);
-
       // Auto-pause when scrolled out of view
       const vObs = new IntersectionObserver(entries => {
         entries.forEach(e => {
@@ -2223,9 +2181,7 @@ function createPostElement(p){
         await fetch(API+'/ads/impression',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({post_id:p.id,viewer:currentUser?currentUser.email:''})});
         loadMonetization();
       });
-      
-      v.style.display = 'none';
-      wrap.append(thumbImg, playOverlay, v, hint);
+      wrap.append(v, hint);
       media.append(wrap);
     } else {
       const im=document.createElement('img'); im.src=optimizeCldUrl(p.file_url, false); media.append(im);
@@ -3767,4 +3723,20 @@ def api_admin_wipe_posts():
 
 # ══════════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=app.config["PORT"], debug=False)
+    try:
+        print(f"Starting VibeNet on {app.config['PORT']}")
+        print(f"Database: {app.config['SQLALCHEMY_DATABASE_URI'][:50]}...")
+        print(f"Supabase: {'OK' if _supabase_ok() else 'Not configured'}")
+        
+        # Test database connection
+        with app.app_context():
+            db.create_all()
+            print("✓ Database tables created/verified")
+        
+        print("✓ All checks passed, starting Flask")
+        app.run(host="0.0.0.0", port=app.config["PORT"], debug=False)
+    except Exception as e:
+        print(f"✗ Startup failed: {e}")
+        import traceback
+        traceback.print_exc()
+        exit(1)
